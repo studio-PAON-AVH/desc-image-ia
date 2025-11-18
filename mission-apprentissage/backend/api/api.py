@@ -8,7 +8,7 @@ def read_root():
     return {"API": "Success"}
 
 @app.post("/predict")
-def describe_image(request: ImageRequest):
+async def describe_image(request: ImageRequest):
     """
     Point de terminaison pour décrire une image
     Args:
@@ -17,15 +17,9 @@ def describe_image(request: ImageRequest):
         dict: Descriptions de l'image en anglais et français
     """
     try:
-        # Validation de l'URL
-        if not request.image or not isinstance(request.image, str):
-            raise HTTPException(
-                status_code=400, 
-                detail="URL d'image invalide ou manquante"
-            )
-
-        results = get_image_describe(request.image)
-        return results  
+        # Faire la classificication de l'image, la récupérer puis envoyer l'image à décrire
+        r = await get_image_describe(request.images)
+        return {"descriptions": r}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Erreur de traitement: {str(e)}")
