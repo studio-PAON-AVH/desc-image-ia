@@ -3,31 +3,6 @@
 {% block title %}Accueil - Descripteur d'Images IA{% endblock %}
 
 {% block content %}
-<!-- Section Hero -->
-<section class="hero-section">
-    <div class="container">
-        <div class="row align-items-center">
-            <div class="col-lg-6">
-                <h1 class="display-4 fw-bold mb-4">
-                    <i class="fas fa-robot me-3"></i>
-                    Descripteur d'images avec l'IA
-                </h1>
-                <p class="lead mb-4">
-                    Découvrez le pouvoir de l'intelligence artificielle pour analyser et décrire vos images automatiquement. 
-                    Notre système utilise des modèles IA open-source de pointe pour générer des descriptions détaillées et précises.
-                </p>
-                <div class="d-flex gap-3">
-                    <span class="badge bg-light text-dark px-3 py-2">
-                        <i class="fas fa-eye me-2"></i>Description automatique
-                    </span>
-                </div>
-            </div>
-            <div class="col-lg-6 text-center">
-                <i class="fas fa-camera fa-10x opacity-75"></i>
-            </div>
-        </div>
-    </div>
-</section>
 
 <!-- Section Formulaire -->
 <section class="py-5">
@@ -42,89 +17,38 @@
                         </h3>
                     </div>
                     <div class="card-body p-4">
-                        <form method="post" action="{% url 'process_image' %}" enctype="multipart/form-data" data-loading="true" id="imageForm">
+                        <form id="imageForm" enctype="multipart/form-data">
                             {% csrf_token %}
                             
                             <!-- Upload par fichier -->
                             <div class="mb-4">
                                 <h5 class="mb-3">
                                     <i class="fas fa-cloud-upload-alt text-primary me-2"></i>
-                                    Option 1: Télécharger un fichier
+                                    Choisir une image
                                 </h5>
                                 <div class="upload-zone" id="uploadZone">
                                     <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
-                                    <h4 class="text-muted">Glissez-déposez votre image ici</h4>
-                                    <p class="text-muted mb-3">ou cliquez pour sélectionner un fichier</p>
-                                    <input type="file" class="form-control d-none" id="imageFile" name="image_file" accept="image/*">
+                                    <h4 class="text-muted">Glissez-déposez vos images ici</h4>
+                                    <p class="text-muted mb-3">ou cliquez pour sélectionner des fichiers</p>
+                                    <input type="file" class="form-control d-none" id="imageFile" name="image" accept="image/*" multiple required>
                                     <button type="button" class="btn btn-outline-primary" onclick="document.getElementById('imageFile').click()">
-                                        <i class="fas fa-folder-open me-2"></i>Choisir un fichier
+                                        <i class="fas fa-folder-open me-2"></i>Choisir des fichiers
                                     </button>
                                     <div class="mt-2">
-                                        <small class="text-muted">Formats supportés: JPG, PNG, GIF, BMP, WEBP (max 10MB)</small>
+                                        <small class="text-muted">Formats supportés: JPG, PNG, GIF, BMP, WEBP (max 10MB par fichier)</small>
                                     </div>
                                 </div>
                                 <div id="filePreview" class="mt-3" style="display: none;">
-                                    <div class="alert alert-info">
-                                        <i class="fas fa-info-circle me-2"></i>
-                                        <strong>Fichier sélectionné:</strong> <span id="fileName"></span>
+                                    <div class="alert alert-info d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <i class="fas fa-info-circle me-2"></i>
+                                            <strong><span id="fileCount">0</span> fichier(s) sélectionné(s)</strong>
+                                        </div>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('imageFile').click()">
+                                            <i class="fas fa-plus me-1"></i>Ajouter plus
+                                        </button>
                                     </div>
-                                </div>
-                            </div>
-
-                            <!-- Séparateur -->
-                            <div class="text-center my-4">
-                                <span class="badge bg-secondary px-4 py-2">OU</span>
-                            </div>
-
-                            <!-- Upload par URL -->
-                            <div class="mb-4">
-                                <h5 class="mb-3">
-                                    <i class="fas fa-link text-primary me-2"></i>
-                                    Option 2: URL d'une image
-                                </h5>
-                                <div class="input-group">
-                                    <span class="input-group-text">
-                                        <i class="fas fa-globe"></i>
-                                    </span>
-                                    <input type="url" class="form-control" id="imageUrl" name="image_url" 
-                                           placeholder="https://exemple.com/image.jpg">
-                                    <button type="button" class="btn btn-outline-secondary" id="previewUrl">
-                                        <i class="fas fa-eye"></i> Aperçu
-                                    </button>
-                                </div>
-                                <div class="form-text">
-                                    <i class="fas fa-info-circle me-1"></i>
-                                    Collez l'URL complète d'une image accessible publiquement
-                                </div>
-                            </div>
-
-                            <!-- Aperçu URL -->
-                            <div id="urlPreview" class="mb-4" style="display: none;">
-                                <div class="card">
-                                    <div class="card-header">
-                                        <h6 class="mb-0">Aperçu de l'image</h6>
-                                    </div>
-                                    <div class="card-body text-center">
-                                        <img id="previewImage" src="" alt="Aperçu" class="img-fluid" style="max-height: 300px;">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Options -->
-                            <div class="mb-4">
-                                <h5 class="mb-3">
-                                    <i class="fas fa-cogs text-primary me-2"></i>
-                                    Options d'analyse
-                                </h5>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="translateToFrench" name="translate_to_french">
-                                    <label class="form-check-label" for="translateToFrench">
-                                        <i class="fas fa-language me-2"></i>
-                                        Traduire la description en français
-                                    </label>
-                                    <div class="form-text">
-                                        Par défaut, les descriptions sont générées en anglais
-                                    </div>
+                                    <div id="previewGrid" class="row g-2"></div>
                                 </div>
                             </div>
 
@@ -132,173 +56,378 @@
                             <div class="d-grid">
                                 <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
                                     <i class="fas fa-magic me-2"></i>
-                                    Analyser l'Image
+                                    Analyser l'image
                                 </button>
                             </div>
                         </form>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-</section>
 
-<!-- Section Fonctionnalités -->
-<section class="py-5 bg-light">
-    <div class="container">
-        <div class="row text-center mb-5">
-            <div class="col">
-                <h2 class="display-6 fw-bold">Comment ça fonctionne ?</h2>
-                <p class="lead text-muted">L'IA analyse vos images en quelques étapes simples</p>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col-md-4 mb-4">
-                <div class="card card-custom h-100">
-                    <div class="card-body text-center">
-                        <div class="mb-3">
-                            <i class="fas fa-upload fa-3x text-primary"></i>
+                <!-- Résultats de l'analyse -->
+                <div id="resultsSection" class="mt-4" style="display: none;">
+                    <div class="card card-custom">
+                        <div class="card-header bg-success text-white">
+                            <h4 class="mb-0">
+                                <i class="fas fa-check-circle me-2"></i>
+                                Résultats de l'analyse
+                            </h4>
                         </div>
-                        <h5>1. Téléchargez</h5>
-                        <p class="text-muted">Uploadez vos fichiers EPUB/PDF ou fournissez une URL.</p>
+                        <div class="card-body">
+                            <div id="analysisResults"></div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4 mb-4">
-                <div class="card card-custom h-100">
-                    <div class="card-body text-center">
-                        <div class="mb-3">
-                            <i class="fas fa-brain fa-3x text-success"></i>
-                        </div>
-                        <h5>2. Analysons</h5>
-                        <p class="text-muted">L'IA examine l'image et génère une description détaillée.</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4 mb-4">
-                <div class="card card-custom h-100">
-                    <div class="card-body text-center">
-                        <div class="mb-3">
-                            <i class="fas fa-file-alt fa-3x text-info"></i>
-                        </div>
-                        <h5>3. Obtenez les résultats</h5>
-                        <p class="text-muted">Recevez une description précise pour vos images.</p>
+
+                <!-- Zone d'erreur -->
+                <div id="errorSection" class="mt-4" style="display: none;">
+                    <div class="alert alert-danger">
+                        <h5><i class="fas fa-exclamation-triangle me-2"></i>Erreur</h5>
+                        <p id="errorMessage"></p>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 </section>
-{% endblock %}
 
-{% block extra_js %}
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const uploadZone = document.getElementById('uploadZone');
     const imageFile = document.getElementById('imageFile');
     const filePreview = document.getElementById('filePreview');
-    const fileName = document.getElementById('fileName');
-    const imageUrl = document.getElementById('imageUrl');
-    const previewUrl = document.getElementById('previewUrl');
-    const urlPreview = document.getElementById('urlPreview');
-    const previewImage = document.getElementById('previewImage');
+    const fileCount = document.getElementById('fileCount');
+    const previewGrid = document.getElementById('previewGrid');
     const imageForm = document.getElementById('imageForm');
     const submitBtn = document.getElementById('submitBtn');
+    const resultsSection = document.getElementById('resultsSection');
+    const analysisResults = document.getElementById('analysisResults');
+    const errorSection = document.getElementById('errorSection');
+    const errorMessage = document.getElementById('errorMessage');
+    
+    let selectedFiles = [];
 
-    // Gestion du drag & drop
-    uploadZone.addEventListener('dragover', function(e) {
-        e.preventDefault();
-        uploadZone.classList.add('dragover');
-    });
+    // Configuration des modèles
+    const MODELS = [
+        { key: 'salesforce_blip', name: 'Salesforce BLIP', color: 'primary', icon: 'robot' },
+        { key: 'florence2', name: 'Florence-2', color: 'success', icon: 'brain' },
+        { key: 'git_large', name: 'GIT Large', color: 'info', icon: 'eye' }
+    ];
 
-    uploadZone.addEventListener('dragleave', function(e) {
-        e.preventDefault();
-        uploadZone.classList.remove('dragover');
-    });
-
-    uploadZone.addEventListener('drop', function(e) {
-        e.preventDefault();
-        uploadZone.classList.remove('dragover');
-        
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            const file = files[0];
-            if (file.type.startsWith('image/')) {
-                imageFile.files = files;
-                showFilePreview(file);
-                imageUrl.value = ''; // Clear URL input
-                urlPreview.style.display = 'none';
-            } else {
-                alert('Veuillez sélectionner un fichier image valide.');
-            }
-        }
-    });
-
-    // Clic sur la zone d'upload
-    uploadZone.addEventListener('click', function() {
-        imageFile.click();
-    });
-
-    // Changement de fichier
-    imageFile.addEventListener('change', function() {
-        if (this.files.length > 0) {
-            showFilePreview(this.files[0]);
-            imageUrl.value = ''; // Clear URL input
-            urlPreview.style.display = 'none';
-        }
-    });
-
-    // Aperçu de l'URL
-    previewUrl.addEventListener('click', function() {
-        const url = imageUrl.value.trim();
-        if (url) {
-            previewImage.src = url;
-            previewImage.onload = function() {
-                urlPreview.style.display = 'block';
-                filePreview.style.display = 'none';
-                imageFile.value = ''; // Clear file input
-            };
-            previewImage.onerror = function() {
-                alert('Impossible de charger l\'image depuis cette URL.');
-            };
-        }
-    });
-
-    // Clear URL preview when URL input changes
-    imageUrl.addEventListener('input', function() {
-        if (!this.value.trim()) {
-            urlPreview.style.display = 'none';
-        }
-    });
-
-    function showFilePreview(file) {
-        fileName.textContent = file.name + ' (' + formatFileSize(file.size) + ')';
-        filePreview.style.display = 'block';
-    }
-
+    // Fonction pour formater la taille des fichiers
     function formatFileSize(bytes) {
         if (bytes === 0) return '0 Bytes';
         const k = 1024;
         const sizes = ['Bytes', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
     }
 
-    // Validation du formulaire
-    imageForm.addEventListener('submit', function(e) {
-        const hasFile = imageFile.files.length > 0;
-        const hasUrl = imageUrl.value.trim() !== '';
+    // Extraire la description d'un résultat de modèle
+    function extractDescription(modelResult) {
+        if (!modelResult) return 'Non disponible';
         
-        if (!hasFile && !hasUrl) {
-            e.preventDefault();
-            alert('Veuillez sélectionner un fichier ou fournir une URL d\'image.');
-            return false;
+        // Si c'est une chaîne, retourner directement
+        if (typeof modelResult === 'string') return modelResult;
+        
+        // Chercher la description dans l'ordre de préférence
+        if (modelResult.french_description) return modelResult.french_description;
+        if (modelResult.description) return modelResult.description;
+        if (modelResult.text) return modelResult.text;
+        
+        // Si c'est un objet avec des résultats imbriqués
+        if (modelResult.results && Array.isArray(modelResult.results)) {
+            const firstResult = modelResult.results[0];
+            if (typeof firstResult === 'string') return firstResult;
+            if (firstResult?.french_description) return firstResult.french_description;
+            if (firstResult?.description) return firstResult.description;
+            if (firstResult?.text) return firstResult.text;
         }
+        
+        return 'Non disponible';
+    }
+
+    // Générer une carte de résultat pour un modèle
+    function generateModelCard(modelName, description, color, icon) {
+        return `
+            <div class="mb-3 p-3 border rounded">
+                <h6 class="text-${color} mb-2">
+                    <i class="fas fa-${icon} me-2"></i>
+                    ${modelName}
+                </h6>
+                <p class="mb-0">${description}</p>
+            </div>
+        `;
+    }
+
+    // Créer une carte de prévisualisation de fichier
+    function createPreviewCard(file, index) {
+        const col = document.createElement('div');
+        col.className = 'col-md-4 col-sm-6';
+        
+        const card = document.createElement('div');
+        card.className = 'card position-relative';
+        card.style.cssText = 'height: 200px;';
+        
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            card.innerHTML = `
+                <img src="${e.target.result}" class="card-img-top" style="height: 150px; object-fit: cover;" alt="${file.name}">
+                <div class="card-body p-2">
+                    <small class="text-truncate d-block" title="${file.name}">${file.name}</small>
+                    <small class="text-muted">${formatFileSize(file.size)}</small>
+                </div>
+                <button type="button" class="btn btn-danger btn-sm position-absolute top-0 end-0 m-2" onclick="removeFile(${index})" style="z-index: 10;">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+        };
+        reader.readAsDataURL(file);
+        
+        col.appendChild(card);
+        return col;
+    }
+
+    // Générer le HTML pour une image et ses résultats
+    function generateImageCard(imageData, file, imgIndex) {
+        const fileName = file ? file.name : `Image ${imgIndex + 1}`;
+        
+        let html = `
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-image me-2"></i>
+                        ${fileName}
+                    </h5>
+                </div>
+                <div class="card-body">
+        `;
+        
+        // Afficher la miniature si disponible
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const imgElement = document.querySelector(`#preview-${imgIndex}`);
+                if (imgElement) imgElement.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+            
+            html += `
+                <div class="text-center mb-3">
+                    <img id="preview-${imgIndex}" src="" alt="${fileName}" class="img-fluid rounded" style="max-height: 300px;">
+                </div>
+            `;
+        }
+        
+        html += '<div class="mb-4">';
+        
+        // Générer les cartes pour chaque modèle
+        MODELS.forEach(model => {
+            const description = extractDescription(imageData[model.key]);
+            html += generateModelCard(model.name, description, model.color, model.icon);
+        });
+        
+        html += '</div></div></div>';
+        
+        return html;
+    }
+
+    function addFiles(files) {
+        const validFiles = files.filter(file => file.type.startsWith('image/'));
+        
+        if (validFiles.length === 0) {
+            showError('Veuillez sélectionner des fichiers image valides.');
+            return;
+        }
+        
+        // Ajouter les nouveaux fichiers sans supprimer les anciens
+        selectedFiles = [...selectedFiles, ...validFiles];
+        updateFilePreview();
+    }
+
+    function updateFilePreview() {
+        if (selectedFiles.length === 0) {
+            filePreview.style.display = 'none';
+            return;
+        }
+        
+        fileCount.textContent = selectedFiles.length;
+        previewGrid.innerHTML = '';
+        
+        selectedFiles.forEach((file, index) => {
+            previewGrid.appendChild(createPreviewCard(file, index));
+        });
+        
+        filePreview.style.display = 'block';
+        
+        // Mettre à jour l'input file
+        const dataTransfer = new DataTransfer();
+        selectedFiles.forEach(file => dataTransfer.items.add(file));
+        imageFile.files = dataTransfer.files;
+    }
+
+    // Gestion Drag and Drop
+    uploadZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        uploadZone.classList.add('dragover');
+    });
+    uploadZone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+    });
+    uploadZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+        
+        const files = Array.from(e.dataTransfer.files);
+        addFiles(files);
+    });
+
+    // Upload file click
+    uploadZone.addEventListener('click', function(e) {
+        if (!e.target.closest('button')) {
+            imageFile.click();
+        }
+    });
+
+    // Changement de fichier
+    imageFile.addEventListener('change', function() {
+        if (this.files.length > 0) {
+            addFiles(Array.from(this.files));
+        }
+    });
+
+    window.removeFile = function(index) {
+        selectedFiles.splice(index, 1);
+        updateFilePreview();
+    };
+
+    // Soumission du formulaire
+    imageForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        if (selectedFiles.length === 0) {
+            showError('Veuillez sélectionner au moins une image.');
+            return;
+        }
+
+        // Cacher les sections de résultats précédents
+        resultsSection.style.display = 'none';
+        errorSection.style.display = 'none';
         
         // Désactiver le bouton pendant le traitement
         submitBtn.disabled = true;
-        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Traitement en cours...';
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Analyse en cours... Cela peut prendre jusqu\'à 2 minutes';
+
+        try {
+            const formData = new FormData();
+            selectedFiles.forEach((file) => {
+                formData.append('image', file);
+            });
+
+            const response = await fetch('{% url "api_process_image" %}', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}'
+                }
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                displayResults(data.results, selectedFiles);
+            } else if (response.status === 408) {
+                showError('Le traitement prend plus de temps que prévu. Les modèles sont peut-être en train de se charger. Veuillez réessayer.');
+            } else {
+                showError(data.error || 'Une erreur est survenue lors de l\'analyse.');
+            }
+        } catch (error) {
+            showError('Erreur de connexion: ' + error.message);
+        } finally {
+            // Réactiver le bouton
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-magic me-2"></i>Analyser l\'image';
+        }
     });
+
+    function displayResults(data, files) {
+        console.log('Data received:', data);
+        
+        if (!data || typeof data !== 'object') {
+            analysisResults.innerHTML = '<div class="alert alert-warning">Aucun résultat disponible</div>';
+            resultsSection.style.display = 'block';
+            return;
+        }
+        
+        // Vérifier si la structure contient "images"
+        const imagesData = data.images || {};
+        const imageKeys = Object.keys(imagesData).sort();
+        
+        if (imageKeys.length === 0) {
+            analysisResults.innerHTML = '<div class="alert alert-warning">Aucune image n\'a été traitée</div>';
+            resultsSection.style.display = 'block';
+            return;
+        }
+        
+        // Générer le HTML pour toutes les images
+        let html = '';
+        imageKeys.forEach((imageKey, index) => {
+            const imageData = imagesData[imageKey];
+            html += generateImageCard(imageData, files && files[index], index);
+        });
+        
+        // Afficher le temps de traitement
+        const processingTime = data.time || 0;
+        if (processingTime > 0) {
+            html += `
+                <div class="alert alert-info">
+                    <i class="fas fa-clock me-2"></i>
+                    Temps de traitement: ${processingTime.toFixed(2)} secondes
+                </div>
+            `;
+        }
+        
+        analysisResults.innerHTML = html;
+        resultsSection.style.display = 'block';
+        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function showError(message) {
+        errorMessage.textContent = message;
+        errorSection.style.display = 'block';
+        resultsSection.style.display = 'none';
+        
+        // Scroll vers l'erreur
+        errorSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
 });
 </script>
+
+<style>
+.upload-zone {
+    border: 3px dashed #ccc;
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.upload-zone:hover, .upload-zone.dragover {
+    border-color: #667eea;
+    background-color: #f8f9ff;
+}
+
+.card-custom {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    border: none;
+    border-radius: 10px;
+}
+
+#previewImage {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+</style>
+
 {% endblock %}

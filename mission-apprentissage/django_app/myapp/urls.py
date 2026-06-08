@@ -27,18 +27,9 @@ urlpatterns = [
     
     # Vues principales
     path('', views.home_view, name='home'),
-    path('home/', views.home_view, name='home_alt'),
     
-    # Traitement d'image
-    path('process/', views.process_image_view, name='process_image'),
-    path('results/', views.results_view, name='results'),
-    path('clear-results/', views.clear_results, name='clear_results'),
-    
-    # API endpoints
+    # Traitement API
     path('api/process/', views.api_process_image, name='api_process_image'),
-    
-    # Rétrocompatibilité
-    path('index/', views.index, name='index'),
 ]
 
 # Servir les fichiers media en développement
