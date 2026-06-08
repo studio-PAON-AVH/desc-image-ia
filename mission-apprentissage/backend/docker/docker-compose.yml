@@ -1,5 +1,11 @@
 version: '3.9'
 services:
+  redis:
+    build:
+      context: ..
+      dockerfile: redis/Dockerfile
+    ports:
+      - "6380:6379"
   saleforce_cpu_large:
     build:
       context: ..
