@@ -1,12 +1,23 @@
-import logging 
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .routers.epub import router as epub_router
 from .routers.task import router as task_router
 from .routers.description import router as description_router
 from .routers.auth import router as auth_router
+from .broker import broker
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not broker.is_worker_process:
+        await broker.startup()
+    yield   
+    if not broker.is_worker_process:
+        await broker.shutdown()
+
+
+app = FastAPI(lifespan=lifespan)
 log = logging.getLogger("uvicorn.error")
 
 origins = [
