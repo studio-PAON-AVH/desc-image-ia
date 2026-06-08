@@ -2,8 +2,8 @@ import asyncio
 import uuid
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status
 from fastapi.responses import JSONResponse
-from ..utils.image_request import ImageRequest
-from ..utils.image_describe import get_image_describe
+from ..utils.image_request import ImageRequest, EPUBRequest
+from ..utils.image_describe import get_image_describe, describe_images_epub
 from ..utils.image_classifier import classify_image
 from ..redis.redis import redis_server_prod
 from typing import List
@@ -87,6 +87,23 @@ async def describe_image(request: ImageRequest, background_tasks: BackgroundTask
 def process_image_describe(img_list: List[str], task_id: str):
     try:
         description = asyncio.run(get_image_describe(img_list))
+        r.set(task_id, json.dumps(description, ensure_ascii=False))
+    except Exception as e:
+        r.set(task_id, json.dumps({"error": str(e)}, ensure_ascii=False))
+        
+@app.post("/predict/epub", status_code=status.HTTP_201_CREATED)
+async def describe_epub(request: EPUBRequest, background_tasks: BackgroundTasks):
+    try:
+        task_id = str(uuid.uuid4())
+        r.set(task_id, json.dumps({"status": "en attente"}, ensure_ascii=False))
+        background_tasks.add_task(process_epub_describe, request.epub_path, task_id)
+        return {"task_id": task_id}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Erreur de traitement: {str(e)}")
+
+def process_epub_describe(epub_path: str, task_id: str):
+    try:
+        description = asyncio.run(describe_images_epub(epub_path))
         r.set(task_id, json.dumps(description, ensure_ascii=False))
     except Exception as e:
         r.set(task_id, json.dumps({"error": str(e)}, ensure_ascii=False))

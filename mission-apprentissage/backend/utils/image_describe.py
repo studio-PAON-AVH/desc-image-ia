@@ -5,6 +5,8 @@ import time
 from typing import List
 from dotenv import load_dotenv
 import os
+from .extract import extract_images_epub
+import shutil
 
 load_dotenv()
 
@@ -95,3 +97,22 @@ async def get_image_describe(images: List[str]):
         "total_images": total_images,
         "time": end - start
     }
+    
+async def describe_images_epub(epub_path: str):
+    image_paths, temp_folder = extract_images_epub(epub_path)
+
+    if not image_paths:
+        return {"error": "Aucune image trouvée dans l'EPUB"}
+
+    try:
+        import base64
+        img_list = []
+        for img_path in image_paths:
+            with open(img_path, "rb") as f:
+                img_bs64 = base64.b64encode(f.read()).decode("utf-8")
+                img_list.append(img_bs64)
+
+        return await get_image_describe(img_list)
+    finally:
+        if temp_folder:
+            shutil.rmtree(temp_folder)
