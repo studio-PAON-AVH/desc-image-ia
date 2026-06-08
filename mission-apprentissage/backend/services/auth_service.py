@@ -1,14 +1,36 @@
 import jwt
 import os
+import secrets
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from pwdlib import PasswordHash
 from sqlalchemy import select
 from ..database import User
+from ..redis.redis import redis_server_dev
 
 load_dotenv()
 hasher = PasswordHash.recommended()
+r = redis_server_dev()
+
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+
+def create_refresh_token(email: str) -> str:
+    token = secrets.token_urlsafe(32)
+    r.set(f"refresh:{token}", email, ex=REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+    return token
+
+
+def validate_refresh_token(token: str) -> str | None:
+    email = r.get(f"refresh:{token}")
+    if email is None:
+        return None
+    return email.decode() if isinstance(email, bytes) else email
+
+
+def revoke_refresh_token(token: str) -> None:
+    r.delete(f"refresh:{token}")
 
 def hash_password(password: str) -> str:
     return hasher.hash(password)
