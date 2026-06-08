@@ -2,13 +2,16 @@ import requests
 import asyncio
 import httpx
 import time
+import logging
 from typing import List
 from dotenv import load_dotenv
 import os
 from .extract import extract_images_epub
 import shutil
+from .batching import aggregate_image
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 async def get_image_describe(images: List[str]):
     start = time.time()
@@ -36,7 +39,20 @@ async def get_image_describe(images: List[str]):
                     "error": f"Unexpected error: {str(e)}"
                 }
                     
-    batch_size = 5
+    # Batch size configurable via env var, default 5
+    try:
+        batch_size = int(os.getenv('BATCH_SIZE', '5'))
+    except Exception:
+        batch_size = 5
+    # Validate and clamp
+    if batch_size < 1:
+        batch_size = 5
+    try:
+        batch_max = int(os.getenv('BATCH_MAX', '200'))
+    except Exception:
+        batch_max = 200
+    batch_size = min(batch_size, batch_max)
+
     batches = [images[i:i + batch_size] for i in range(0, len(images), batch_size)]
 
     tasks = []
@@ -49,7 +65,7 @@ async def get_image_describe(images: List[str]):
     
     end = time.time()
 
-    # Regroupe les résultats par modèle
+    # Regroupe les résultats par modèle (liste de réponses par batch)
     salesforce_results = []
     florence_results = []
     git_results = []
@@ -60,13 +76,10 @@ async def get_image_describe(images: List[str]):
 
     # Réorganiser les résultats par image au lieu de par modèle
     images_results = {}
-    
-    # Déterminer le nombre total d'images
-    total_images = 0
-    if salesforce_results and salesforce_results[0].get('results'):
-        total_images = len(salesforce_results[0]['results'])
-    
-    # Pour chaque image, regrouper les résultats des 3 modèles
+
+    total_images = len(images)
+
+    # initialize
     for img_idx in range(total_images):
         image_key = f"image_{img_idx}"
         images_results[image_key] = {
@@ -75,22 +88,12 @@ async def get_image_describe(images: List[str]):
             "florence2": None,
             "git_large": None
         }
-        
-        # Extraire les résultats de chaque modèle pour cette image
-        for batch in salesforce_results:
-            if batch.get('results') and img_idx < len(batch['results']):
-                images_results[image_key]["salesforce_blip"] = batch['results'][img_idx]
-                break
-        
-        for batch in florence_results:
-            if batch.get('results') and img_idx < len(batch['results']):
-                images_results[image_key]["florence2"] = batch['results'][img_idx]
-                break
-        
-        for batch in git_results:
-            if batch.get('results') and img_idx < len(batch['results']):
-                images_results[image_key]["git_large"] = batch['results'][img_idx]
-                break
+
+
+    for batch_idx in range(len(batches)):
+        aggregate_image(batch_idx, batch_size, "salesforce_blip", salesforce_results, images_results, total_images)
+        aggregate_image(batch_idx, batch_size, "florence2", florence_results, images_results, total_images)
+        aggregate_image(batch_idx, batch_size, "git_large", git_results, images_results, total_images)
 
     return {
         "images": images_results,
@@ -116,3 +119,4 @@ async def describe_images_epub(epub_path: str):
     finally:
         if temp_folder:
             shutil.rmtree(temp_folder)
+            
