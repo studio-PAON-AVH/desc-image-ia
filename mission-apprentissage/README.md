@@ -50,7 +50,18 @@ uvicorn backend.api.api:app --reload --log-level debug
     ```
     [Bruno](https://www.usebruno.com/) ou [Postman](https://www.postman.com/) vous pouvez installer l'un des deux pour tester les requêtes API ou utiliser la documentation API Swagger UI 
 
-9. **Requête API**
+9. **Redis**
+    Dans le terminal faire la commande, pour accéder au serveur Redis :
+    ```bash
+    docker exec -it docker-redis-1 redis-cli
+    ```
+
+10. **Testing**
+    Dans le terminal, pour lancer les tests faire la commande suivante
+    ```bash
+    pytest -v backend/test
+
+11. **Requête API**
 
     ### Exemple de body pour la requête POST (Génération de description)
     ***Route***

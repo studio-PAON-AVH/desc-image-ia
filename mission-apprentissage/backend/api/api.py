@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from ..utils.image_request import ImageRequest
 from ..utils.image_describe import get_image_describe
 from ..utils.image_classifier import classify_image
+from ..redis.redis import redis_server_prod
 from typing import List
 import base64
 import redis
@@ -12,7 +13,7 @@ import json
 import logging 
 
 app = FastAPI()
-r = redis.Redis(host='localhost', port=6380, db=0)
+r = redis_server_prod()
 log = logging.getLogger("uvicorn.error")
 
 try: 
