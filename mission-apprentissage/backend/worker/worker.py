@@ -83,12 +83,10 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
             await save_image_descriptions(session, images, description, model_mapping)
             await update_task_status(session, db_task_id, "completed")
 
-        r.set(task_id, json.dumps(description, ensure_ascii=False))
+        r.set(task_id, json.dumps({"epub_path": epub_path, "descriptions": description}, ensure_ascii=False))
 
         if temp_folder:
             shutil.rmtree(temp_folder)
-        if os.path.exists(epub_path):
-            os.remove(epub_path)
 
     except Exception as e:
         async with async_session() as session:
