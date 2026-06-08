@@ -1,5 +1,5 @@
 #Running the model on CPU
-import requests, time, sys, json, asyncio
+import requests, time, sys, json, asyncio, io, base64
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
 from deep_translator import GoogleTranslator
@@ -24,7 +24,9 @@ async def process_image(image, processor, model):
         if image.startswith(('http://', 'https://')):
             raw_image = Image.open(requests.get(image, stream=True).raw).convert('RGB')
         else:
-            raw_image = Image.open(image).convert('RGB')
+            #raw_image = Image.open(image).convert('RGB')
+            image_bytes = base64.b64decode(image)
+            raw_image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
         start = time.time()
         # description non guidée (sans prompt)
         inputs_without_prompt = processor(raw_image, return_tensors="pt")

@@ -1,5 +1,7 @@
 import torch, requests, time
 import asyncio
+import base64
+import io
 from fastapi import FastAPI
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForCausalLM 
@@ -26,7 +28,9 @@ async def process_image(image, processor, model):
         if image.startswith(('http://', 'https://')):
             raw_image = Image.open(requests.get(image, stream=True).raw).convert('RGB')
         else:
-            raw_image = Image.open(image).convert('RGB')
+            #raw_image = Image.open(image).convert('RGB')
+            image_bytes = base64.b64decode(image)
+            raw_image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
         
         start = time.time()
         task = "<MORE_DETAILED_CAPTION>"
