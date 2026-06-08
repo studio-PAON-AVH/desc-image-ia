@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mission-apprentissage"
+version = "0.1.0"
+description = "API de description d'images EPUB"
+requires-python = ">=3.11"
+dependencies = [
+    # Framework web
+    "fastapi>=0.121.1",
+    "uvicorn[standard]>=0.38.0",
+    "python-multipart>=0.0.20",
+
+    # Base de données
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.0",
+    "psycopg2-binary>=2.9.9",
+
+    # Django (app frontend)
+    "Django>=5.2.8",
+
+    # Redis
+    "redis>=7.1.0",
+
+    # Authentification
+    "pyjwt>=2.8.0",
+    "pwdlib[argon2]>=0.1.0",
+
+    # Task queue
+    "taskiq>=0.12.1",
+    "taskiq-redis>=1.2.2",
+    "ebooklib>=0.20.0",
+
+    # HTTP & parsing
+    "httpx>=0.28.1",
+    "requests>=2.32.5",
+    "beautifulsoup4>=4.14.2",
+
+    # Validation & données
+    "pydantic>=2.12.4",
+    "email-validator>=2.3.0",
+    "Pillow>=12.0.0",
+    "PyYAML>=6.0.3",
+
+    # Utilitaires
+    "python-dotenv>=1.2.1",
+    "sentry-sdk>=2.44.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["backend", "backend.*", "django_app", "django_app.*"]
+exclude = ["migrations"]
