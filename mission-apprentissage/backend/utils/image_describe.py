@@ -17,7 +17,6 @@ async def get_image_describe(images: List[str]):
                     }
                 return response.json()
             except httpx.RequestError as e:
-                print(f"Request error pour {url}: {type(e).__name__} - {str(e)}")
                 return {
                     "success": False,
                     "error": f"Request error: {type(e).__name__} - {str(e)}"
@@ -38,7 +37,7 @@ async def get_image_describe(images: List[str]):
     result = await asyncio.gather(*tasks)
     
     return {
-        "image": images,
+        # "image": images,
         "salesforce_cpu_large": result[0],
         "florence2_large": result[1],
         "git_large": result[2]
