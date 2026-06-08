@@ -142,9 +142,6 @@ TIME_ZONE = 'Europe/Paris'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# FastAPI Backend Configuration
-FASTAPI_URL = 'http://127.0.0.1:8000'
-
 # Logging configuration
 LOGGING = {
     'version': 1,
