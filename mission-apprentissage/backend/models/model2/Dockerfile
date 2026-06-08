@@ -1,0 +1,7 @@
+FROM python:3.10-slim
+WORKDIR /app
+COPY models/model2/requirements.txt .
+COPY models /app/models
+RUN pip install --no-cache-dir -r requirements.txt
+COPY models/model2/florence2_large.py .
+CMD ["uvicorn", "florence2_large:app", "--host", "0.0.0.0", "--port", "8000"]

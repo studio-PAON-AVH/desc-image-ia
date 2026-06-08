@@ -1,0 +1,8 @@
+Pillow
+torch
+transformers
+deep-translator
+einops
+timm
+uvicorn 
+fastapi
