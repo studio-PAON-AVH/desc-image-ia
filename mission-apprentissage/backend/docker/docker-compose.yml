@@ -1,6 +1,6 @@
 version: '3.9'
 services:
-  blip2opt:
+  saleforce_cpu_large:
     build:
       context: ..
       dockerfile: models/model1/Dockerfile

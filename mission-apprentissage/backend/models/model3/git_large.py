@@ -1,9 +1,9 @@
 from transformers import AutoProcessor, AutoModelForCausalLM
-import requests, json, time
+import requests, time
 from PIL import Image
 from deep_translator import GoogleTranslator
 from fastapi import FastAPI
-from models.image_request import ImageRequest
+from backend.utils.image_request import ImageRequest
 
 app = FastAPI()
 

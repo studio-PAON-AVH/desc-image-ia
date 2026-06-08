@@ -1,26 +1,24 @@
+#Running the model on CPU
+import requests, time, sys, json
 from PIL import Image
-import requests, time
-from transformers import Blip2Processor, Blip2ForConditionalGeneration
+from transformers import BlipProcessor, BlipForConditionalGeneration
 from deep_translator import GoogleTranslator
-from models.image_request import ImageRequest
+from backend.utils.image_request import ImageRequest
 from fastapi import FastAPI
 
-app=FastAPI()
-
-processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-model = Blip2ForConditionalGeneration.from_pretrained(
-    "Salesforce/blip2-opt-2.7b"
-)
+app = FastAPI()
 
 @app.get("/")
-def root():
-    return {"status": "blip2 model running"}
+def root(): 
+    return {"status": "salesforce_cpu_large model running"}
 
 @app.post("/describe")
 def predict(request: ImageRequest):
-    return describe_with_blip2(request.image)
+    return describe_with_salesforce_cpu_large(request.image)
 
-def describe_with_blip2(image_path_or_url, output_file=None):
+def describe_with_salesforce_cpu_large(image_path_or_url, output_file=None):
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
+    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large")
 
     if image_path_or_url.startswith(('http://', 'https://')):
         try:
@@ -44,11 +42,12 @@ def describe_with_blip2(image_path_or_url, output_file=None):
             }
 
     try:
-        inputs = processor(raw_image, return_tensors="pt")
         start = time.time()
-        generated_ids = model.generate(**inputs)
-        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-        translation = GoogleTranslator(source='auto', target='fr').translate(generated_text)
+        # description non guidée (sans prompt)
+        inputs_without_prompt = processor(raw_image, return_tensors="pt")
+        out = model.generate(**inputs_without_prompt)
+        generated_text = processor.decode(out[0], skip_special_tokens=True)
+        translation = GoogleTranslator(source='en', target='fr').translate(generated_text)
         end = time.time()
         return {
             "success": True,
@@ -61,5 +60,5 @@ def describe_with_blip2(image_path_or_url, output_file=None):
             "success": False,
             "english_description": None,
             "french_description": None,
-            "error": f"Model error: {e}"
+            "error": f"Erreur lors de la génération de la description: {e}"
         }
