@@ -5,6 +5,7 @@
 - [Python](https://www.python.org/downloads/) doit petre installé sur votre ordinateur
 - [Docker](https://www.docker.com/) doit être installé sur votre ordinateur
 
+uvicorn backend.api.api:app --reload --log-level debug
 
 ## Étapes à suivre
 
@@ -23,32 +24,39 @@
         cd mission-apprentissage
     ```
 
-5. **Installez des dépendances**
+5. **Créez un environnement virtuel**
+    ```bash
+        python -m venv venv
+    ```
+
+6. **Installez des dépendances**
     Si le projet utilise Python et un fichier `requirements.txt` :
     ```bash 
         pip install -r requirements.txt
     ```
 
-6. **Créez les images et les containeurs Docker 
+7. **Créez les images et les containeurs Docker 
     ```bash
         docker-compose up --build -d
     ```
 
-7. **Tester les requêtes API**
+8. **Tester les requêtes API**
     Sur votre terminal, lancer l'api FastAPI:
     ```bash
-        fastapi dev
+        cd backend/api, fastapi dev 
+        ou  
+        uvicorn backend.api.api:app --reload --log-level debug
+
     ```
     [Bruno](https://www.usebruno.com/) ou [Postman](https://www.postman.com/) vous pouvez installer l'un des deux pour tester les requêtes API ou utiliser la documentation API Swagger UI 
 
-8. **Requête API**
+9. **Requête API**
 
     ### Exemple de body pour la requête POST (Génération de description)
     ***Route***
     ```
     POST http://127.0.0.1:8000/predict
     ```
-
     ***Body***
     ```json 
         {
@@ -58,12 +66,16 @@
         }
     ```
 
+    ***Route***
+    ```
+    GET http://127.0.0.1:8000/predict/task_id
+    ```
+
     ### Exemple de body pour la requête POST (Classification des images)*
     ***Route***
     ```
     POST http://127.0.0.1:8000/classify
     ```
-
     ***Body***
     ```json
         {
