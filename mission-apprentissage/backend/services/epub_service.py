@@ -65,7 +65,7 @@ async def get_image_describe(images: List[str]):
         tasks.append(call(os.getenv('URL_FLORANCE_2_LARGE'), batch))
         tasks.append(call(os.getenv('URL_GIT_LARGE'), batch))
 
-    results = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     
     end = time.time()
 
@@ -74,9 +74,11 @@ async def get_image_describe(images: List[str]):
     florence_results = []
     git_results = []
     for i in range(0, len(results), 3):
-        salesforce_results.append(results[i])
-        florence_results.append(results[i + 1])
-        git_results.append(results[i + 2])
+        def safe(r):
+            return r if not isinstance(r, Exception) else {"success": False, "error": str(r)}
+        salesforce_results.append(safe(results[i]))
+        florence_results.append(safe(results[i + 1]))
+        git_results.append(safe(results[i + 2]))
 
     # Réorganiser les résultats par image au lieu de par modèle
     images_results = {}
@@ -186,6 +188,7 @@ async def save_task(session: AsyncSession, task_id_redis: str, user_id: int):
         total_images=0,
         processed_images=0,
         created_at=datetime.now(),
+        updated_at=datetime.now(),
         started_at=datetime.now(),
         completed_at=datetime.now(),
     )
@@ -249,4 +252,14 @@ async def save_image_descriptions(session: AsyncSession, images: List[Images], r
                         )
                         session.add(desc)
 
+    await session.commit()
+
+
+async def update_task_status(session: AsyncSession, db_task_id: int, status: str):
+    from sqlalchemy import update as sql_update
+    await session.execute(
+        sql_update(Task)
+        .where(Task.id == db_task_id)
+        .values(status=status, updated_at=datetime.now())
+    )
     await session.commit()
