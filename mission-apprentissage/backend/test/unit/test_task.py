@@ -211,21 +211,21 @@ class TestTaskService:
 
         @pytest.mark.unit
         def test_get_model_key_salesforce(self):
-            """Test que Salesforce/blip retourne la clé salesforce_blip."""
+            """Test que 'Salesforce BLIP' (nom réel en DB) retourne la clé salesforce_blip."""
             from backend.services.task_service import _get_model_key
-            assert _get_model_key("Salesforce/blip") == "salesforce_blip"
+            assert _get_model_key("Salesforce BLIP") == "salesforce_blip"
 
         @pytest.mark.unit
         def test_get_model_key_florence(self):
-            """Test que Florence-2-large retourne la clé florence2."""
+            """Test que 'Florence-2' (nom réel en DB) retourne la clé florence2."""
             from backend.services.task_service import _get_model_key
-            assert _get_model_key("Florence-2-large") == "florence2"
+            assert _get_model_key("Florence-2") == "florence2"
 
         @pytest.mark.unit
         def test_get_model_key_git(self):
-            """Test que microsoft/git-large retourne la clé git_large."""
+            """Test que 'GIT Large' (nom réel en DB) retourne la clé git_large."""
             from backend.services.task_service import _get_model_key
-            assert _get_model_key("microsoft/git-large") == "git_large"
+            assert _get_model_key("GIT Large") == "git_large"
 
         @pytest.mark.unit
         def test_get_model_key_none(self):

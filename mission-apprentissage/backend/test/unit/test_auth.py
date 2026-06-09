@@ -8,6 +8,7 @@ import datetime
 from dotenv import load_dotenv
 from unittest.mock import AsyncMock, MagicMock
 from pydantic import ValidationError
+import jwt
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 from datetime import timedelta
 from backend.controllers.auth_controller import RefreshRequest, UserCreate, UserLogin, create_new_user, create_admin_user, login_for_access_token, get_current_user_info, get_current_user_tasks, logout, refresh_access_token
@@ -172,28 +173,27 @@ async def test_login_for_access_token_invalid_credentials(mocker):
     assert exc_info.value.detail == "Incorrect email or password"
     
 @pytest.mark.unit
-@pytest.mark.asyncio
-async def test_create_access_token(mocker):
+def test_create_access_token():
     """Test de la création d'un token d'accès avec des données valides"""
-    mocker.patch('backend.controllers.auth_controller.create_access_token', return_value="fake_access_token")
     data = {"sub": "testuser@example.com"}
     token = create_access_token(data)
     assert isinstance(token, str)
-    
+    decoded = jwt.decode(token, os.getenv("SECRET_KEY"), algorithms=[os.getenv("ALGORITHM")])
+    assert decoded["sub"] == "testuser@example.com"
+    assert "exp" in decoded
+
 @pytest.mark.unit
-@pytest.mark.asyncio
-async def test_create_refresh_token(mocker):
+def test_create_refresh_token(mocker):
     """Test de la création d'un token de rafraîchissement avec un email valide"""
-    mock_redis = mocker.patch('backend.services.auth_service.r', return_value="fake_redis") # Simule le client Redis
-    email = f"testuser@example.com"
+    mock_r = mocker.patch('backend.services.auth_service.r')
+    email = "testuser@example.com"
     token = create_refresh_token(email)
     assert isinstance(token, str)
     assert len(token) > 0
-    REFRESH_TOKEN_EXPIRE_DAYS = 7
-    mock_redis.set.assert_called_once_with(
+    mock_r.set.assert_called_once_with(
         f"refresh:{token}",
-        "testuser@example.com",
-        ex=REFRESH_TOKEN_EXPIRE_DAYS * 86400
+        email,
+        ex=7 * 86400
     )
     
 @pytest.mark.unit

@@ -81,7 +81,7 @@ class TestEpubService:
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_get_image_describe_return_not_correct_structure(self, mocker):
-            """Test de get_image_describe ne retourne pas une structure incorrecte."""
+            """Test que get_image_describe retourne toujours la bonne structure même si le modèle répond mal."""
             mocker_response = AsyncMock(
                 status_code=200,
                 json=lambda: {
@@ -93,7 +93,10 @@ class TestEpubService:
             img1_b64 = base64.b64encode(b"fake_image_data_1").decode("utf-8")
             img_list = [img1_b64]
             result = await get_image_describe(img_list)
-            assert not isinstance(result, list)
+            assert isinstance(result, dict)
+            assert "images" in result
+            assert "total_images" in result
+            assert "time" in result
             assert "wrong_key" not in result
 
         @pytest.mark.unit
