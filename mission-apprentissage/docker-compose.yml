@@ -83,6 +83,13 @@ services:
     depends_on:
       - redis
       - postgresql
+  
+  frontend-django:
+    build:
+      context: ..
+      dockerfile: mission-apprentissage/django_app/Dockerfile
+    ports:
+      - "7000:7001"
 
 volumes:
   epub_shared:

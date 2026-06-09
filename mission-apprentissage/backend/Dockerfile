@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11
 WORKDIR /app
 COPY mission-apprentissage/pyproject.toml .
 COPY mission-apprentissage/backend /app/backend

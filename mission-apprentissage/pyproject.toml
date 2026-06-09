@@ -49,13 +49,6 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "sentry-sdk>=2.44.0",
 
-    # ML / Models
-    "transformers>=4.57.0",
-    "torch>=2.0.0",
-    "deep-translator>=1.11.0",
-    "timm",
-    "einops",
-    "numpy",
 ]
 
 [project.optional-dependencies]

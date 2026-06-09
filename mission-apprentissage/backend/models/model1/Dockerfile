@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11
 WORKDIR /app
 COPY mission-apprentissage/backend/models/model1/requirements.txt .
 COPY mission-apprentissage/backend/utils /app/utils
