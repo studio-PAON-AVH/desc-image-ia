@@ -3,6 +3,7 @@ import logging
 import os
 import tempfile
 from fastapi import HTTPException, Depends, status
+from fastapi.responses import FileResponse
 from typing import Annotated
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
@@ -42,7 +43,7 @@ async def validate_descriptions(
         )
         return {
             "success": True,
-            "message": "Descriptions validées et alternatives supprimées",
+            "message": "Descriptions finale validées avec succès",
             "validated_count": len(validation_data.validated_descriptions),
         }
     except IntegrityError as e:
@@ -139,4 +140,8 @@ async def add_descriptions_to_epub(
             detail="Erreur lors de la génération du fichier EPUB modifié",
         ) from e
 
-    return {"download_url": f"/downloads/{output_filename}"}
+    return FileResponse(
+        path=output_path,
+        media_type="application/epub+zip",
+        filename=output_filename,
+    )
