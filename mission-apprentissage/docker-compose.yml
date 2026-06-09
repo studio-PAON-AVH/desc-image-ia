@@ -89,7 +89,9 @@ services:
       context: ..
       dockerfile: mission-apprentissage/django_app/Dockerfile
     ports:
-      - "7000:7001"
+      - "7001:7001"
+    depends_on:
+      - fastapi
 
 volumes:
   epub_shared:
