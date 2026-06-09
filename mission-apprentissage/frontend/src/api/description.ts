@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { IDescriptionResponse, IDescriptionValidation } from '../interfaces';
+import type { IDescriptionResponse, IDescriptionValidation } from '@/interfaces';
 
 export async function getDescriptions(taskId: string): Promise<IDescriptionResponse> {
   const response = await apiClient.get<IDescriptionResponse>(`/api/description/${taskId}`);

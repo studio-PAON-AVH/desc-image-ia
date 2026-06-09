@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ILogin, IRegister, IUser, ITask } from '../interfaces';
+import type { ILogin, IRegister, IUser, ITask } from '@/interfaces';
 
 export async function register(body: IRegister): Promise<IUser> {
   const response = await apiClient.post<IUser>('/api/auth/register', body);

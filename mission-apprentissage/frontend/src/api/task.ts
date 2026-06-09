@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ITask } from '../interfaces';
+import type { ITask } from '@/interfaces';
 
 export async function getTask(taskId: string): Promise<{ result: ITask; status?: number }> {
   const response = await apiClient.get<{ result: ITask }>(`/api/task/${taskId}`, {
