@@ -1,5 +1,5 @@
 # Production Dockerfile for the BLIP (Salesforce) captioning microservice.
-# Build context: parent of mission-apprentissage/ (same as current compose).
+# Build context: parent of backend/ (same as current compose).
 
 # ---------- Stage 1: builder ----------
 FROM python:3.12-slim-bookworm AS builder
@@ -20,7 +20,7 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Dependencies first (cache-friendly)
-COPY mission-apprentissage/backend/models/model1/requirements.txt /tmp/requirements.txt
+COPY backend/models/model1/requirements.txt /tmp/requirements.txt
 RUN pip install --upgrade pip \
  && pip install -r /tmp/requirements.txt
 
@@ -55,8 +55,8 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder --chown=appuser:app /opt/hf-cache /opt/hf-cache
 
 WORKDIR /app
-COPY --chown=appuser:app mission-apprentissage/backend/utils.py /app/utils.py
-COPY --chown=appuser:app mission-apprentissage/backend/models/model1/saleforce_cpu_large.py /app/saleforce_cpu_large.py
+COPY --chown=appuser:app backend/utils.py /app/utils.py
+COPY --chown=appuser:app backend/models/model1/saleforce_cpu_large.py /app/saleforce_cpu_large.py
 
 USER appuser:app
 

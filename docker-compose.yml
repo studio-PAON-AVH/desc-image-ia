@@ -37,9 +37,9 @@ services:
 
   saleforce_cpu_large:
     build:
-      context: ..
-      dockerfile: mission-apprentissage/backend/models/model1/Dockerfile
-    image: mission-apprentissage/saleforce_cpu_large:latest
+      context: .
+      dockerfile: ./backend/models/model1/Dockerfile
+    image: saleforce_cpu_large:latest
     ports:
       - "8001:8000"
     restart: unless-stopped
@@ -70,9 +70,9 @@ services:
 
   florence2_large:
     build:
-      context: ..
-      dockerfile: mission-apprentissage/backend/models/model2/Dockerfile
-    image: mission-apprentissage/florence2_large:latest
+      context: .
+      dockerfile: ./backend/models/model2/Dockerfile
+    image: florence2_large:latest
     ports:
       - "8002:8000"
     restart: unless-stopped
@@ -104,9 +104,9 @@ services:
 
   git_large:
     build:
-      context: ..
-      dockerfile: mission-apprentissage/backend/models/model3/Dockerfile
-    image: mission-apprentissage/git_large:latest
+      context: .
+      dockerfile: ./backend/models/model3/Dockerfile
+    image: git_large:latest
     ports:
       - "8003:8000"
     restart: unless-stopped
@@ -138,12 +138,12 @@ services:
 
   fastapi:
     build:
-      context: ..
-      dockerfile: mission-apprentissage/backend/Dockerfile
+      context: .
+      dockerfile: ./backend/Dockerfile
     ports:
       - "8000:8000"
     environment:
-      APP_ENV: .env.dev
+      APP_ENV: .env
       REDIS_URL: redis://redis:6379/1
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -178,11 +178,11 @@ services:
 
   worker-taskiq:
     build:
-      context: ..
-      dockerfile: mission-apprentissage/backend/worker/Dockerfile
+      context: .
+      dockerfile: ./backend/worker/Dockerfile
     restart: unless-stopped
     environment:
-      APP_ENV: .env.dev
+      APP_ENV: .env
       REDIS_URL: redis://redis:6379/1
       REDIS_HOST: redis
       REDIS_PORT: 6379
