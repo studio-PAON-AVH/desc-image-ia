@@ -1,4 +1,13 @@
 services:
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./gitlab-runner/config:/etc/gitlab-runner
+    environment:
+      - REGISTRATION=${GITLAB_RUNNER_TOKEN}
+
   postgresql:
     image: postgres:16
     environment:

@@ -100,3 +100,17 @@ Commande pour lancer couvertures de tests.
     pytest -m integration --cov=. --cov-report=term-missing --cov-config=.coveragerc
     pytest -m e2e --cov=. --cov-report=term-missing --cov-config=.coveragerc
 ```
+
+
+## Gitlab Runner 
+```bash
+docker pull gitlab/gitlab-runner:bleeding
+
+docker volume create gitlab-runner-config    
+
+docker run -d --name gitlab-runner --restart always `
+    -v /var/run/docker.sock:/var/run/docker.sock `
+    -v gitlab-runner-config:/etc/gitlab-runner `
+    gitlab/gitlab-runner:latest
+
+docker exec -it gitlab-runner gitlab-runner register
