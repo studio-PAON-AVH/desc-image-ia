@@ -1,11 +1,11 @@
 import apiClient from './client';
-import type { ITask } from '@/interfaces';
+import type { ITask, ITaskResultResponse } from '@/interfaces';
 
-export async function getTask(taskId: string): Promise<{ result: ITask; status?: number }> {
-  const response = await apiClient.get<{ result: ITask }>(`/api/task/${taskId}`, {
+export async function getTask(taskId: string): Promise<ITaskResultResponse> {
+  const response = await apiClient.get<ITaskResultResponse>(`/api/task/${taskId}`, {
     validateStatus: (status) => status === 200 || status === 202,
   });
-  return { result: response.data.result, status: response.status };
+  return response.data;
 }
 
 export async function getAdminTasks(

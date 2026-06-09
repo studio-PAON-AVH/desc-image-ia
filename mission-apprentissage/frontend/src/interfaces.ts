@@ -20,23 +20,44 @@ export interface ITask {
 export interface IDescription {
   description_id: number;
   description_text: string;
-  model_name: string;
-  model_key: string;
-  is_written_by_ai: boolean;
-  is_written_by_human: boolean;
+  model_name: string | null;
+  model_key: string | null;
   validated_by_human: boolean;
+}
+export interface IFinalDescription {
+  description_text: string;
+  model_key: string | null;
 }
 export interface IImage {
   image_id: number;
   image_file_name: string;
   image_position_in_epub: number;
   descriptions: IDescription[];
+  final_description?: IFinalDescription | null;
 }
 export interface IDescriptionResponse { task_id: string; status: string; total_images: number; images: IImage[]; }
+
+export interface ITaskModelDescription { french_description?: string; description?: string; success?: boolean; error?: string; }
+export interface ITaskImageEntry {
+  index: number;
+  salesforce_blip: ITaskModelDescription | null;
+  florence2: ITaskModelDescription | null;
+  git_large: ITaskModelDescription | null;
+}
+export interface ITaskDescriptionsPayload {
+  images: Record<string, ITaskImageEntry>;
+  total_images: number;
+}
+export interface ITaskResultResponse {
+  completed: boolean;
+  status: 'pending' | 'in_progress' | 'completed';
+  total_images?: number;
+  processed_images?: number;
+  message?: string;
+  result?: ITaskDescriptionsPayload | { descriptions?: ITaskDescriptionsPayload };
+}
 export interface IDescriptionValidation {
   image_index: number;
   text: string;
-  model?: string;
-  is_written_by_ai: boolean;
-  is_written_by_human: boolean;
+  model?: string | null;
 }

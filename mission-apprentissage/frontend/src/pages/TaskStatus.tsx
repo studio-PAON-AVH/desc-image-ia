@@ -136,6 +136,16 @@ export function TaskStatus() {
             </Alert>
           )}
 
+          {task.status !== 'completed' && task.status !== 'failed' && (
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => navigate(`/task/${taskId}/descriptions`)}
+            >
+              Prévisualiser les descriptions
+            </Button>
+          )}
+
           {task.status === 'completed' && (
             <Button className="w-full" onClick={() => navigate(`/task/${taskId}/descriptions`)}>
               Valider les descriptions
