@@ -13,4 +13,22 @@ def home_view(request):
     return render(request, 'home.html')
 
 def process_view(request):
-    return render(request, 'process.html')
+    return render(request, 'process.html', {
+        'fastapi_url': settings.FASTAPI_URL
+    })
+
+def review_view(request):
+    task_id = request.GET.get('task_id', '')
+    return render(request, 'review.html', {'task_id': task_id, 'fastapi_url': settings.FASTAPI_URL})
+
+def login_view(request):
+    return render(request, 'login.html', {
+        'next_url': request.GET.get('next', '/process/'),
+        'fastapi_url': settings.FASTAPI_URL
+    })
+
+def register_view(request):
+    return render(request, 'register.html', {
+        'fastapi_url': settings.FASTAPI_URL
+    })
+

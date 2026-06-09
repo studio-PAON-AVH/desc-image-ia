@@ -20,7 +20,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from . import views
-from .services.process import process_describe_epub_image
+from .process import process_describe_image
 
 urlpatterns = [
     # Administration
@@ -31,8 +31,14 @@ urlpatterns = [
     
     # Vue de traitement
     path('process/', views.process_view, name='process_view'),
+    # Vue de review des descriptions
+    path('review/', views.review_view, name='review_view'),
+    # Vue de login
+    path('login/', views.login_view, name='login_view'),
+    # Vue de register
+    path('register/', views.register_view, name='register_view'),
     # Endpoint API pour le traitement des fichiers EPUB
-    path('api/process/epub/', process_describe_epub_image, name='process_describe_epub_image'),
+    path('api/process/epub/', process_describe_image, name='process_describe_epub_image'),
 ]
 
 # Servir les fichiers media en développement

@@ -14,14 +14,9 @@ document.addEventListener("DOMContentLoaded", function () {
   let selectedFiles = [];
 
   const MODELS = [
-    {
-      key: "salesforce_blip",
-      name: "Salesforce BLIP",
-      color: "primary",
-      icon: "robot",
-    },
-    { key: "florence2", name: "Florence-2", color: "success", icon: "brain" },
-    { key: "git_large", name: "GIT Large", color: "info", icon: "eye" },
+    { key: "salesforce_blip", name: "Salesforce BLIP", color: "primary", icon: "robot", },
+    { key: "florence2", name: "Florence-2", color: "success", icon: "robot", },
+    { key: "git_large", name: "GIT Large", color: "info", icon: "robot", },
   ];
 
   // Fonction pour formater la taille des fichiers
@@ -203,23 +198,46 @@ document.addEventListener("DOMContentLoaded", function () {
       '<i class="fas fa-spinner fa-spin me-2"></i>Analyse en cours... Cela peut prendre jusqu\'à 2 minutes';
 
     try {
-      const formData = new FormData();
-      selectedFiles.forEach((file) => {
-        formData.append("epub", file);
-      });
+      const token = localStorage.getItem('access_token');
+      if (!token) { redirectToLogin(); return; }
 
-      const response = await fetch(API_PROCESS_EPUB_URL, {
+      const buildFormData = () => {
+        const formData = new FormData();
+        selectedFiles.forEach((file) => formData.append("epub", file));
+        return formData;
+      };
+
+      let response = await fetch(API_PROCESS_EPUB_URL, {
         method: "POST",
-        body: formData,
+        body: buildFormData(),
         headers: {
           "X-CSRFToken": CSRF_TOKEN,
+          "Authorization": `Bearer ${token}`,
         },
       });
+
+      if (response.status === 401) {
+        const refreshed = await refreshAccessToken();
+        if (!refreshed) { redirectToLogin(); return; }
+        response = await fetch(API_PROCESS_EPUB_URL, {
+          method: "POST",
+          body: buildFormData(),
+          headers: {
+            "X-CSRFToken": CSRF_TOKEN,
+            "Authorization": `Bearer ${localStorage.getItem('access_token')}`,
+          },
+        });
+      }
 
       const data = await response.json();
 
       if (response.ok && data.success) {
-        displayResults(data.results, selectedFiles);
+        const taskId = data.results.task_id;
+        if (taskId) {
+          showUploadSuccess(taskId);
+        } else {
+          displayResults(data.results, selectedFiles);
+        }
       } else if (response.status === 408) {
         showError(
           "Le traitement prend plus de temps que prévu. Les modèles sont peut-être en train de se charger. Veuillez réessayer.",
@@ -338,6 +356,23 @@ document.addEventListener("DOMContentLoaded", function () {
 
     html += "</div></div>";
     return html;
+  }
+
+  function showUploadSuccess(taskId) {
+    resultSection.style.display = "block";
+    analysisResults.innerHTML = `
+      <div class="alert alert-success">
+        <h5><i class="fas fa-check-circle me-2"></i>Fichier EPUB envoyé avec succes</h5>
+        <p>Le traitement des images est en cours en arriere-plan.</p>
+      </div>
+      <div class="d-grid gap-2">
+        <a href="/review/?task_id=${taskId}" class="btn btn-primary btn-lg">
+          <i class="fas fa-table me-2"></i>
+          Voir les descriptions
+        </a>
+      </div>
+    `;
+    resultSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   function showError(message) {

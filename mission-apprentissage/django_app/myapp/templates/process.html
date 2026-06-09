@@ -113,20 +113,23 @@
   </div>
 </section>
 
-{% block scripts %}
-{% load static%}
+{% endblock content %}
+
+{% block extra_css %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'styles/process.css' %}">
+{% endblock extra_css %}
+
+{% block extra_js %}
+{% load static %}
+<script>
+  if (!localStorage.getItem('access_token')) {
+    window.location.href = '/login/?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+  }
+</script>
 <script>
   const API_PROCESS_EPUB_URL = "{% url 'process_describe_epub_image' %}";
   const CSRF_TOKEN = "{{ csrf_token }}";
 </script>
 <script src="{% static 'js/process.js' %}"></script>
-{% endblock scripts %}
-
-{% block styles %}
-{% load static%}
-<link rel="stylesheet"
-href="{% static 'styles/process.css' %}">
-
-{% endblock styles %}
-
-{% endblock content %}
+{% endblock extra_js %}

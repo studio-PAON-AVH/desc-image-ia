@@ -1,0 +1,82 @@
+/* Styles spécifiques à la page review */
+
+/* Tableau sticky header */
+.sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: #f8f9fa;
+}
+
+/* Hover sur les lignes */
+.table-hover tbody tr:hover {
+    background-color: #f8f9ff;
+    cursor: pointer;
+}
+
+/* Ligne validée */
+.table-success {
+    background-color: #d4edda !important;
+}
+
+/* Radios et labels */
+.form-check-label {
+    cursor: pointer;
+}
+
+.description-preview {
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: #6c757d;
+    margin-top: 4px;
+}
+
+/* Badge dans le tableau */
+.badge-sm {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+}
+
+/* Textarea personnalisé */
+.custom-description-input {
+    font-size: 0.875rem;
+    resize: vertical;
+}
+
+.custom-description-input:disabled {
+    background-color: #e9ecef;
+    cursor: not-allowed;
+}
+
+/* Stats header */
+.progress {
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+    .table {
+        font-size: 0.875rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .table-responsive {
+        font-size: 0.75rem;
+    }
+
+    .description-preview {
+        font-size: 0.75rem;
+    }
+}
+
+/* Animation pour le chargement */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.table tbody tr {
+    animation: fadeIn 0.3s ease-in;
+}
