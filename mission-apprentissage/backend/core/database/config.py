@@ -77,7 +77,6 @@ class Task(Base):
     total_images: Mapped[int] = mapped_column(Integer)
     processed_images: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[str] = mapped_column(TIMESTAMP)
-    updated_at: Mapped[str] = mapped_column(TIMESTAMP)
     started_at: Mapped[str] = mapped_column(TIMESTAMP)
     completed_at: Mapped[str] = mapped_column(TIMESTAMP)
     user = relationship("User", back_populates="task", lazy="select")
@@ -120,34 +119,47 @@ class Images(Base):
     updated_at: Mapped[str] = mapped_column(TIMESTAMP)
     epub = relationship("Epub", back_populates="images", lazy="select")
     task = relationship("Task", back_populates="images", lazy="select")
-    description = relationship("ImageDescription", back_populates="image", lazy="select")
+    description = relationship("DescriptionByIA", back_populates="image", lazy="select")
+    final_description = relationship("DescriptionFinale", back_populates="image", lazy="select")
 
 
-class ImageDescription(Base):
-    __tablename__ = "ImageDescriptions"
+class DescriptionFinale(Base):
+    __tablename__ = "DescriptionFinale"
     __table_args__ = (
-        Index("idx_image_model", "image_id", "model_ia_id"),
-        Index("idx_image_descriptions_image_id", "image_id"),
-        Index("idx_image_descriptions_model_ia_id", "model_ia_id"),
-        Index("idx_image_descriptions_is_written_by_ai", "is_written_by_ai"),
-        Index("idx_image_descriptions_is_written_by_human", "is_written_by_human"),
+        Index("idx_desc_finale_image_model", "image_id", "model_ia_id"),
+        Index("idx_desc_finale_image_id", "image_id"),
+        Index("idx_desc_finale_model_ia_id", "model_ia_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("Users.id"))
     image_id: Mapped[int] = mapped_column(Integer, ForeignKey("Images.id"))
     model_ia_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("ModelsIA.id"), nullable=True
     )
     description_text: Mapped[str] = mapped_column(Text)
-    is_written_by_ai: Mapped[bool] = mapped_column(default=True)
-    is_written_by_human: Mapped[bool] = mapped_column(default=False)
-    generated_at: Mapped[str] = mapped_column(TIMESTAMP)
     validated_by_human: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[str] = mapped_column(TIMESTAMP)
     updated_at: Mapped[str] = mapped_column(TIMESTAMP)
-    image = relationship("Images", back_populates="description", lazy="select")
-    modelIA = relationship("ModelsIA", back_populates="descriptions", lazy="select")
+    image = relationship("Images", back_populates="final_description", lazy="select")
+    modelIA = relationship("ModelsIA", back_populates="final_descriptions", lazy="select")
 
+class DescriptionByIA(Base):
+    __tablename__ = "DescriptionByIA"
+    __table_args__ = (
+        Index("idx_desc_by_ia_image_model", "image_id", "model_ia_id"),
+        Index("idx_desc_by_ia_image_id", "image_id"),
+        Index("idx_desc_by_ia_model_ia_id", "model_ia_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    image_id: Mapped[int] = mapped_column(Integer, ForeignKey("Images.id"))
+    model_ia_id: Mapped[int] = mapped_column(Integer, ForeignKey("ModelsIA.id"))
+    description_text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP)
+    image = relationship("Images", back_populates="description", lazy="select")
+    modelIA = relationship("ModelsIA", back_populates="descriptions_by_ia", lazy="select")
 
 class ModelsIA(Base):
     __tablename__ = "ModelsIA"
@@ -156,7 +168,8 @@ class ModelsIA(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[str] = mapped_column(TIMESTAMP)
     updated_at: Mapped[str] = mapped_column(TIMESTAMP)
-    descriptions = relationship("ImageDescription", back_populates="modelIA", lazy="select")
+    descriptions_by_ia = relationship("DescriptionByIA", back_populates="modelIA", lazy="select")
+    final_descriptions = relationship("DescriptionFinale", back_populates="modelIA", lazy="select")
 
 
 async def create_tables():

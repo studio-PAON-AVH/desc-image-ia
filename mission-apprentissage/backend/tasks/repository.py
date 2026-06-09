@@ -1,9 +1,9 @@
 from datetime import datetime
 from typing import List
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..core.database.config import Task, Images, ImageDescription, ModelsIA
+from ..core.database.config import Task, Images, DescriptionByIA, DescriptionFinale, ModelsIA
 
 
 async def find_task_by_redis_id(session: AsyncSession, task_id_redis: str) -> Task | None:
@@ -19,7 +19,10 @@ async def find_all_tasks(session: AsyncSession, limit: int, offset: int) -> list
 async def find_images_with_descriptions(session: AsyncSession, task_id: int) -> List[Images]:
     result = await session.execute(
         select(Images)
-        .options(selectinload(Images.description).selectinload(ImageDescription.modelIA))
+        .options(
+            selectinload(Images.description).selectinload(DescriptionByIA.modelIA),
+            selectinload(Images.final_description).selectinload(DescriptionFinale.modelIA),
+        )
         .where(Images.task_id == task_id)
         .order_by(Images.image_position_in_epub)
     )
@@ -40,49 +43,53 @@ async def find_all_models(session: AsyncSession) -> List[ModelsIA]:
 
 async def find_description_by_image_and_model(
     session: AsyncSession, image_id: int, model_id: int
-) -> ImageDescription | None:
+) -> DescriptionByIA | None:
     result = await session.execute(
-        select(ImageDescription).where(
-            ImageDescription.image_id == image_id,
-            ImageDescription.model_ia_id == model_id,
+        select(DescriptionByIA).where(
+            DescriptionByIA.image_id == image_id,
+            DescriptionByIA.model_ia_id == model_id,
         )
     )
     return result.scalar_one_or_none()
 
 
-async def delete_ai_descriptions_for_image(session: AsyncSession, image_id: int) -> None:
-    await session.execute(
-        delete(ImageDescription).where(
-            ImageDescription.image_id == image_id,
-            ImageDescription.is_written_by_ai == True,
-        )
+async def find_final_description_by_image(
+    session: AsyncSession, image_id: int
+) -> DescriptionFinale | None:
+    result = await session.execute(
+        select(DescriptionFinale).where(DescriptionFinale.image_id == image_id)
     )
+    return result.scalar_one_or_none()
 
 
-async def delete_descriptions_except_model(
-    session: AsyncSession, image_id: int, model_id: int
-) -> None:
-    await session.execute(
-        delete(ImageDescription).where(
-            ImageDescription.image_id == image_id,
-            ImageDescription.model_ia_id != model_id,
-        )
-    )
+async def upsert_final_description(
+    session: AsyncSession,
+    image_id: int,
+    user_id: int,
+    model_ia_id: int | None,
+    text: str,
+) -> DescriptionFinale:
+    """Crée ou met à jour la DescriptionFinale d'une image.
 
-
-async def create_human_description(
-    session: AsyncSession, image_id: int, text: str
-) -> ImageDescription:
-    desc = ImageDescription(
+    model_ia_id=None signifie description écrite à la main (aucun modèle IA choisi).
+    """
+    now = datetime.now()
+    existing = await find_final_description_by_image(session, image_id)
+    if existing is not None:
+        existing.user_id = user_id
+        existing.model_ia_id = model_ia_id
+        existing.description_text = text
+        existing.validated_by_human = True
+        existing.updated_at = now
+        return existing
+    desc = DescriptionFinale(
+        user_id=user_id,
         image_id=image_id,
-        model_ia_id=None,
+        model_ia_id=model_ia_id,
         description_text=text,
-        is_written_by_ai=False,
-        is_written_by_human=True,
-        generated_at=datetime.now(),
         validated_by_human=True,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
+        created_at=now,
+        updated_at=now,
     )
     session.add(desc)
     return desc

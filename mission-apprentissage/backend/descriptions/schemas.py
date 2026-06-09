@@ -7,8 +7,6 @@ class DescriptionValidation(BaseModel):
     image_index: int
     text: str
     model: Optional[str] = None
-    is_written_by_ai: bool
-    is_written_by_human: bool
 
 
 class DescriptionValidationRequest(BaseModel):
