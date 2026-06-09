@@ -1,371 +1,380 @@
 import sys
 import pytest
-from dotenv import load_dotenv
 from unittest.mock import AsyncMock, MagicMock
 from pydantic import BaseModel
 from typing import List
+from fastapi.testclient import TestClient
+
+from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Fake Pydantic model so FastAPI route decorators don't crash ──
+# ── Mock heavy ML dependencies BEFORE importing model modules ──
+sys.modules.setdefault("transformers", MagicMock())
+sys.modules.setdefault("torch", MagicMock())
+
+# ── Mock the local 'utils' module used by the model microservices ──
+# (each model does: from utils import ImageRequest, ModelConfig, process_image)
 class FakeImageRequest(BaseModel):
     images: List[str] = []
 
-fake_utils_image_request = MagicMock()
-fake_utils_image_request.ImageRequest = FakeImageRequest
 
-# ── Mock heavy dependencies BEFORE importing model modules ──
-sys.modules.setdefault('transformers', MagicMock())
-sys.modules.setdefault('torch', MagicMock())
-sys.modules.setdefault('utils', MagicMock())
-sys.modules.setdefault('utils.image_request', fake_utils_image_request)
+utils_mock = MagicMock()
+utils_mock.ImageRequest = FakeImageRequest
+sys.modules["utils"] = utils_mock
 
-from backend.models.model1.saleforce_cpu_large import (
-    process_image as salesforce_process_image,
-    describe_with_salesforce_cpu_large,
-)
-from backend.models.model2.florence2_large import (
-    process_image as florence_process_image,
-    describe_image_with_florance2_large,
-)
-from backend.models.model3.git_large import (
-    process_image as git_process_image,
-    describe_image_with_git_large,
-)
+from backend.models.model1.saleforce_cpu_large import app as salesforce_app
+from backend.models.model2.florence2_large import app as florence_app
+from backend.models.model3.git_large import app as git_app
+
+_MOCK_RESULT = {
+    "success": True,
+    "english_description": "a dog on a beach",
+    "french_description": "un chien sur une plage",
+    "generation_time": 0.5,
+}
+_MOCK_PROCESSOR = MagicMock()
+_MOCK_MODEL = MagicMock()
 
 
 # ─────────────────────────────────────────────
-# Model 1 — Salesforce BLIP (CPU Large)
+# Model 1 — Salesforce BLIP (endpoint /describe)
 # ─────────────────────────────────────────────
 
-class TestSalesforceModel:
 
-    class TestProcessImage:
+class TestSalesforceEndpoint:
+    @pytest.mark.unit
+    def test_root_returns_status(self):
+        client = TestClient(salesforce_app)
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "salesforce_cpu_large" in resp.json()["status"]
 
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_url_success(self, mocker):
-            """Test process_image avec une URL valide retourne les descriptions."""
-            mock_raw_image = MagicMock()
-            mocker.patch("backend.models.model1.saleforce_cpu_large.requests.get", return_value=MagicMock())
-            mocker.patch("backend.models.model1.saleforce_cpu_large.Image.open", return_value=mock_raw_image)
-            mock_raw_image.convert.return_value = mock_raw_image
+    @pytest.mark.unit
+    def test_describe_empty_list_returns_empty(self, mocker):
+        mocker.patch(
+            "backend.models.model1.saleforce_cpu_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model1.saleforce_cpu_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(salesforce_app).post("/describe", json={"images": []})
+        assert resp.status_code == 200
+        assert resp.json() == {"results": []}
 
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
-            mock_processor.return_value = {"input_ids": MagicMock()}
-            mock_model.generate.return_value = [MagicMock()]
-            mock_processor.decode.return_value = "a dog on a beach"
+    @pytest.mark.unit
+    def test_describe_single_image_returns_result(self, mocker):
+        mocker.patch(
+            "backend.models.model1.saleforce_cpu_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model1.saleforce_cpu_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(salesforce_app).post("/describe", json={"images": ["aGVsbG8="]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "results" in body
+        assert len(body["results"]) == 1
+        assert body["results"][0]["success"] is True
+        assert body["results"][0]["english_description"] == "a dog on a beach"
+        assert body["results"][0]["french_description"] == "un chien sur une plage"
 
-            mocker.patch(
-                "backend.models.model1.saleforce_cpu_large.GoogleTranslator",
-                return_value=MagicMock(translate=MagicMock(return_value="un chien sur une plage"))
-            )
-
-            result = await salesforce_process_image("https://example.com/image.jpg", mock_processor, mock_model)
-
-            assert result["success"] is True
-            assert result["english_description"] == "a dog on a beach"
-            assert result["french_description"] == "un chien sur une plage"
-            assert result["generation_time"] >= 0
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_base64_success(self, mocker):
-            """Test process_image avec une image base64 valide."""
-            mock_raw_image = MagicMock()
-            mocker.patch("backend.models.model1.saleforce_cpu_large.base64.b64decode", return_value=b"fake_bytes")
-            mocker.patch("backend.models.model1.saleforce_cpu_large.Image.open", return_value=mock_raw_image)
-            mock_raw_image.convert.return_value = mock_raw_image
-
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
-            mock_processor.return_value = {"input_ids": MagicMock()}
-            mock_model.generate.return_value = [MagicMock()]
-            mock_processor.decode.return_value = "a cat sitting"
-
-            mocker.patch(
-                "backend.models.model1.saleforce_cpu_large.GoogleTranslator",
-                return_value=MagicMock(translate=MagicMock(return_value="un chat assis"))
-            )
-
-            result = await salesforce_process_image("aGVsbG8=", mock_processor, mock_model)
-
-            assert result["success"] is True
-            assert result["english_description"] == "a cat sitting"
-            assert result["french_description"] == "un chat assis"
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_error(self, mocker):
-            """Test process_image retourne un dict avec 'error' en cas d'exception."""
-            mocker.patch(
-                "backend.models.model1.saleforce_cpu_large.requests.get",
-                side_effect=Exception("Connexion refusée")
-            )
-
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
-
-            result = await salesforce_process_image("https://example.com/bad.jpg", mock_processor, mock_model)
-
-            assert "error" in result
-            assert "Connexion refusée" in result["error"]
-
-    class TestDescribeWithSalesforceCpuLarge:
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_describe_returns_results_list(self, mocker):
-            """Test que describe_with_salesforce_cpu_large retourne une liste de résultats."""
-            mock_result = {
-                "success": True,
-                "english_description": "a dog",
-                "french_description": "un chien",
-                "generation_time": 0.5
-            }
-            mocker.patch(
-                "backend.models.model1.saleforce_cpu_large.process_image",
-                new=AsyncMock(return_value=mock_result)
-            )
-
-            result = await describe_with_salesforce_cpu_large(["img1", "img2"])
-
-            assert "results" in result
-            assert len(result["results"]) == 2
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_describe_empty_list(self, mocker):
-            """Test que describe_with_salesforce_cpu_large retourne une liste vide."""
-            result = await describe_with_salesforce_cpu_large([])
-
-            assert result == {"results": []}
+    @pytest.mark.unit
+    def test_describe_multiple_images(self, mocker):
+        mocker.patch(
+            "backend.models.model1.saleforce_cpu_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model1.saleforce_cpu_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(salesforce_app).post(
+            "/describe", json={"images": ["img1", "img2", "img3"]}
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()["results"]) == 3
 
 
 # ─────────────────────────────────────────────
-# Model 2 — Florence-2
+# Model 2 — Florence-2 (endpoint /describe)
 # ─────────────────────────────────────────────
 
-class TestFlorence2Model:
 
-    class TestProcessImage:
+class TestFlorenceEndpoint:
+    @pytest.mark.unit
+    def test_root_returns_status(self):
+        client = TestClient(florence_app)
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "florence2_large" in resp.json()["status"]
 
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_url_success(self, mocker):
-            """Test process_image avec une URL valide retourne les descriptions."""
-            mock_raw_image = MagicMock()
-            mock_raw_image.width = 640
-            mock_raw_image.height = 480
-            mocker.patch("backend.models.model2.florence2_large.requests.get", return_value=MagicMock())
-            mocker.patch("backend.models.model2.florence2_large.Image.open", return_value=mock_raw_image)
-            mock_raw_image.convert.return_value = mock_raw_image
+    @pytest.mark.unit
+    def test_describe_empty_list_returns_empty(self, mocker):
+        mocker.patch(
+            "backend.models.model2.florence2_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model2.florence2_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(florence_app).post("/describe", json={"images": []})
+        assert resp.status_code == 200
+        assert resp.json() == {"results": []}
 
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
-            task = "<MORE_DETAILED_CAPTION>"
-            mock_inputs = MagicMock()
-            mock_inputs.__getitem__ = MagicMock(side_effect=lambda k: MagicMock())
-            mock_processor.return_value = mock_inputs
-            mock_processor.batch_decode.return_value = ["a detailed description of a forest"]
-            mock_processor.post_process_generation.return_value = {task: "a detailed description of a forest"}
+    @pytest.mark.unit
+    def test_describe_single_image_returns_result(self, mocker):
+        mocker.patch(
+            "backend.models.model2.florence2_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model2.florence2_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(florence_app).post("/describe", json={"images": ["aGVsbG8="]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "results" in body
+        assert len(body["results"]) == 1
+        assert body["results"][0]["english_description"] == "a dog on a beach"
 
-            mocker.patch(
-                "backend.models.model2.florence2_large.GoogleTranslator",
-                return_value=MagicMock(translate=MagicMock(return_value="une description détaillée d'une forêt"))
-            )
-
-            result = await florence_process_image("https://example.com/forest.jpg", mock_processor, mock_model)
-
-            assert result["success"] is True
-            assert result["english_description"] == "a detailed description of a forest"
-            assert result["french_description"] == "une description détaillée d'une forêt"
-            assert result["generation_time"] >= 0
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_base64_success(self, mocker):
-            """Test process_image avec une image base64 valide."""
-            mock_raw_image = MagicMock()
-            mock_raw_image.width = 320
-            mock_raw_image.height = 240
-            mocker.patch("backend.models.model2.florence2_large.base64.b64decode", return_value=b"fake_bytes")
-            mocker.patch("backend.models.model2.florence2_large.Image.open", return_value=mock_raw_image)
-            mock_raw_image.convert.return_value = mock_raw_image
-
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
-            task = "<MORE_DETAILED_CAPTION>"
-            mock_inputs = MagicMock()
-            mock_inputs.__getitem__ = MagicMock(side_effect=lambda k: MagicMock())
-            mock_processor.return_value = mock_inputs
-            mock_processor.batch_decode.return_value = ["a red car"]
-            mock_processor.post_process_generation.return_value = {task: "a red car"}
-
-            mocker.patch(
-                "backend.models.model2.florence2_large.GoogleTranslator",
-                return_value=MagicMock(translate=MagicMock(return_value="une voiture rouge"))
-            )
-
-            result = await florence_process_image("aGVsbG8=", mock_processor, mock_model)
-
-            assert result["success"] is True
-            assert result["english_description"] == "a red car"
-            assert result["french_description"] == "une voiture rouge"
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_error(self, mocker):
-            """Test process_image retourne un dict avec 'error' en cas d'exception."""
-            mocker.patch(
-                "backend.models.model2.florence2_large.requests.get",
-                side_effect=Exception("Timeout")
-            )
-
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
-
-            result = await florence_process_image("https://example.com/bad.jpg", mock_processor, mock_model)
-
-            assert "error" in result
-            assert "Timeout" in result["error"]
-
-    class TestDescribeImageWithFlorance2Large:
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_describe_returns_results_list(self, mocker):
-            """Test que describe_image_with_florance2_large retourne une liste de résultats."""
-            mock_result = {
-                "success": True,
-                "english_description": "a forest",
-                "french_description": "une forêt",
-                "generation_time": 1.2
-            }
-            mocker.patch(
-                "backend.models.model2.florence2_large.process_image",
-                new=AsyncMock(return_value=mock_result)
-            )
-
-            result = await describe_image_with_florance2_large(["img1", "img2"])
-
-            assert "results" in result
-            assert len(result["results"]) == 2
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_describe_empty_list(self, mocker):
-            """Test que describe_image_with_florance2_large retourne une liste vide."""
-            result = await describe_image_with_florance2_large([])
-
-            assert result == {"results": []}
+    @pytest.mark.unit
+    def test_describe_multiple_images(self, mocker):
+        mocker.patch(
+            "backend.models.model2.florence2_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model2.florence2_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(florence_app).post("/describe", json={"images": ["img1", "img2"]})
+        assert resp.status_code == 200
+        assert len(resp.json()["results"]) == 2
 
 
 # ─────────────────────────────────────────────
-# Model 3 — Microsoft GIT Large
+# Model 3 — Microsoft GIT Large (endpoint /describe)
 # ─────────────────────────────────────────────
 
-class TestGitLargeModel:
 
-    class TestProcessImage:
+class TestGitEndpoint:
+    @pytest.mark.unit
+    def test_root_returns_status(self):
+        client = TestClient(git_app)
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "git_large" in resp.json()["status"]
 
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_url_success(self, mocker):
-            """Test process_image avec une URL valide retourne les descriptions."""
-            mock_raw_image = MagicMock()
-            mocker.patch("backend.models.model3.git_large.requests.get", return_value=MagicMock())
-            mocker.patch("backend.models.model3.git_large.Image.open", return_value=mock_raw_image)
-            mock_raw_image.convert.return_value = mock_raw_image
+    @pytest.mark.unit
+    def test_describe_empty_list_returns_empty(self, mocker):
+        mocker.patch(
+            "backend.models.model3.git_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model3.git_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(git_app).post("/describe", json={"images": []})
+        assert resp.status_code == 200
+        assert resp.json() == {"results": []}
 
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
-            mock_processor.return_value.pixel_values = MagicMock()
-            mock_model.generate.return_value = MagicMock()
-            mock_processor.batch_decode.return_value = ["two people walking"]
+    @pytest.mark.unit
+    def test_describe_single_image_returns_result(self, mocker):
+        mocker.patch(
+            "backend.models.model3.git_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model3.git_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(git_app).post("/describe", json={"images": ["aGVsbG8="]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "results" in body
+        assert len(body["results"]) == 1
+        assert body["results"][0]["success"] is True
 
-            mocker.patch(
-                "backend.models.model3.git_large.GoogleTranslator",
-                return_value=MagicMock(translate=MagicMock(return_value="deux personnes qui marchent"))
-            )
+    @pytest.mark.unit
+    def test_describe_multiple_images(self, mocker):
+        mocker.patch(
+            "backend.models.model3.git_large._get_model",
+            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
+        )
+        mocker.patch(
+            "backend.models.model3.git_large.process_image",
+            new=AsyncMock(return_value=_MOCK_RESULT),
+        )
+        resp = TestClient(git_app).post("/describe", json={"images": ["img1", "img2", "img3"]})
+        assert resp.status_code == 200
+        assert len(resp.json()["results"]) == 3
 
-            result = await git_process_image("https://example.com/people.jpg", mock_processor, mock_model)
 
-            assert result["success"] is True
-            assert result["english_description"] == "two people walking"
-            assert result["french_description"] == "deux personnes qui marchent"
-            assert result["generation_time"] >= 0
+# ─────────────────────────────────────────────
+# backend/utils.py — process_image (logique commune aux 3 modèles)
+# ─────────────────────────────────────────────
 
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_base64_success(self, mocker):
-            """Test process_image avec une image base64 valide."""
-            mock_raw_image = MagicMock()
-            mocker.patch("backend.models.model3.git_large.base64.b64decode", return_value=b"fake_bytes")
-            mocker.patch("backend.models.model3.git_large.Image.open", return_value=mock_raw_image)
-            mock_raw_image.convert.return_value = mock_raw_image
 
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
-            mock_processor.return_value.pixel_values = MagicMock()
-            mock_model.generate.return_value = MagicMock()
-            mock_processor.batch_decode.return_value = ["a mountain landscape"]
+class TestProcessImage:
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_url_image_success(self, mocker):
+        from backend.utils import process_image, ModelConfig
 
-            mocker.patch(
-                "backend.models.model3.git_large.GoogleTranslator",
-                return_value=MagicMock(translate=MagicMock(return_value="un paysage de montagne"))
-            )
+        mock_image = MagicMock()
+        mock_image.convert.return_value = mock_image
+        mocker.patch("backend.utils.requests.get", return_value=MagicMock())
+        mocker.patch("backend.utils.Image.open", return_value=mock_image)
 
-            result = await git_process_image("aGVsbG8=", mock_processor, mock_model)
+        mock_processor = MagicMock()
+        mock_model = MagicMock()
+        mock_processor.return_value = {"input_ids": MagicMock()}
+        mock_model.generate.return_value = [MagicMock()]
+        mock_processor.decode.return_value = "a cat sitting"
 
-            assert result["success"] is True
-            assert result["english_description"] == "a mountain landscape"
-            assert result["french_description"] == "un paysage de montagne"
+        mocker.patch(
+            "backend.utils.GoogleTranslator",
+            return_value=MagicMock(translate=MagicMock(return_value="un chat assis")),
+        )
 
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_process_image_error(self, mocker):
-            """Test process_image retourne un dict avec 'error' en cas d'exception."""
-            mocker.patch(
-                "backend.models.model3.git_large.requests.get",
-                side_effect=Exception("Image introuvable")
-            )
+        config = ModelConfig()
+        result = await process_image(
+            "https://example.com/image.jpg", mock_processor, mock_model, config
+        )
 
-            mock_processor = MagicMock()
-            mock_model = MagicMock()
+        assert result["success"] is True
+        assert result["english_description"] == "a cat sitting"
+        assert result["french_description"] == "un chat assis"
+        assert result["generation_time"] >= 0
 
-            result = await git_process_image("https://example.com/missing.jpg", mock_processor, mock_model)
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_base64_image_success(self, mocker):
+        from backend.utils import process_image, ModelConfig
 
-            assert "error" in result
-            assert "Image introuvable" in result["error"]
+        mock_image = MagicMock()
+        mock_image.convert.return_value = mock_image
+        mocker.patch("backend.utils.base64.b64decode", return_value=b"fake_bytes")
+        mocker.patch("backend.utils.Image.open", return_value=mock_image)
 
-    class TestDescribeImageWithGitLarge:
+        mock_processor = MagicMock()
+        mock_model = MagicMock()
+        mock_processor.return_value = {"input_ids": MagicMock()}
+        mock_model.generate.return_value = [MagicMock()]
+        mock_processor.decode.return_value = "a mountain"
 
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_describe_returns_results_list(self, mocker):
-            """Test que describe_image_with_git_large retourne une liste de résultats."""
-            mock_result = {
-                "success": True,
-                "english_description": "a mountain",
-                "french_description": "une montagne",
-                "generation_time": 0.8
-            }
-            mocker.patch(
-                "backend.models.model3.git_large.process_image",
-                new=AsyncMock(return_value=mock_result)
-            )
+        mocker.patch(
+            "backend.utils.GoogleTranslator",
+            return_value=MagicMock(translate=MagicMock(return_value="une montagne")),
+        )
 
-            result = await describe_image_with_git_large(["img1", "img2"])
+        config = ModelConfig()
+        result = await process_image("aGVsbG8=", mock_processor, mock_model, config)
 
-            assert "results" in result
-            assert len(result["results"]) == 2
+        assert result["success"] is True
+        assert result["english_description"] == "a mountain"
+        assert result["french_description"] == "une montagne"
 
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_describe_empty_list(self, mocker):
-            """Test que describe_image_with_git_large retourne une liste vide."""
-            result = await describe_image_with_git_large([])
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_type_error_returns_error_dict(self, mocker):
+        from backend.utils import process_image, ModelConfig
 
-            assert result == {"results": []}
+        mocker.patch("backend.utils.base64.b64decode", return_value=b"fake")
+        mocker.patch(
+            "backend.utils.Image.open", side_effect=TypeError("format non supporté")
+        )
+
+        config = ModelConfig()
+        result = await process_image("aGVsbG8=", MagicMock(), MagicMock(), config)
+
+        assert "error" in result
+        assert "format non supporté" in result["error"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_pixel_values_only_config(self, mocker):
+        from backend.utils import process_image, ModelConfig
+
+        mock_image = MagicMock()
+        mock_image.convert.return_value = mock_image
+        mocker.patch("backend.utils.base64.b64decode", return_value=b"fake")
+        mocker.patch("backend.utils.Image.open", return_value=mock_image)
+
+        mock_processor = MagicMock()
+        mock_model = MagicMock()
+        mock_processor.return_value.pixel_values = MagicMock()
+        mock_model.generate.return_value = MagicMock()
+        mock_processor.batch_decode.return_value = ["two people walking"]
+
+        mocker.patch(
+            "backend.utils.GoogleTranslator",
+            return_value=MagicMock(
+                translate=MagicMock(return_value="deux personnes qui marchent")
+            ),
+        )
+
+        config = ModelConfig(
+            use_pixel_values_only=True,
+            use_batch_decode=True,
+            generate_kwargs={"max_length": 50},
+        )
+        result = await process_image("aGVsbG8=", mock_processor, mock_model, config)
+
+        assert result["success"] is True
+        assert result["english_description"] == "two people walking"
+        assert result["french_description"] == "deux personnes qui marchent"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_post_process_config(self, mocker):
+        from backend.utils import process_image, ModelConfig
+
+        mock_image = MagicMock()
+        mock_image.width = 640
+        mock_image.height = 480
+        mock_image.convert.return_value = mock_image
+        mocker.patch("backend.utils.requests.get", return_value=MagicMock())
+        mocker.patch("backend.utils.Image.open", return_value=mock_image)
+
+        task = "<MORE_DETAILED_CAPTION>"
+        mock_processor = MagicMock()
+        mock_model = MagicMock()
+        mock_inputs = MagicMock()
+        mock_inputs.__getitem__ = MagicMock(side_effect=lambda k: MagicMock())
+        mock_processor.return_value = mock_inputs
+        mock_model.generate.return_value = MagicMock()
+        mock_processor.batch_decode.return_value = ["a detailed forest scene"]
+        mock_processor.post_process_generation.return_value = {
+            task: "a detailed forest scene"
+        }
+
+        mocker.patch(
+            "backend.utils.GoogleTranslator",
+            return_value=MagicMock(
+                translate=MagicMock(return_value="une scène de forêt détaillée")
+            ),
+        )
+
+        config = ModelConfig(
+            task=task,
+            use_batch_decode=True,
+            skip_special_tokens=False,
+            post_process=True,
+            generate_kwargs={"max_new_tokens": 1024},
+        )
+        result = await process_image(
+            "https://example.com/forest.jpg", mock_processor, mock_model, config
+        )
+
+        assert result["success"] is True
+        assert result["english_description"] == "a detailed forest scene"
+        assert result["french_description"] == "une scène de forêt détaillée"

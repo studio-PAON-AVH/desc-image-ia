@@ -15,12 +15,12 @@ def client(mocker):
     mocker.patch("backend.main.broker", mock_broker)
 
     from backend.main import app
+
     with TestClient(app) as c:
         yield c
 
 
 class TestMainEndpoints:
-
     @pytest.mark.unit
     def test_root_returns_welcome_message(self, client):
         """GET / retourne le message de bienvenue."""
@@ -46,13 +46,12 @@ class TestMainEndpoints:
 
 
 class TestCORSMiddleware:
-
     @pytest.mark.unit
     def test_cors_allowed_origin(self, client):
         """Une origine autorisée reçoit le header CORS."""
-        response = client.get("/health", headers={"Origin": "http://localhost:7001"})
+        response = client.get("/health", headers={"Origin": "http://localhost:5173"})
 
-        assert response.headers.get("access-control-allow-origin") == "http://localhost:7001"
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
     @pytest.mark.unit
     def test_cors_unknown_origin_not_allowed(self, client):
@@ -63,7 +62,6 @@ class TestCORSMiddleware:
 
 
 class TestRoutersRegistered:
-
     @pytest.fixture
     def app(self, mocker):
         mock_broker = MagicMock()
@@ -71,6 +69,7 @@ class TestRoutersRegistered:
         mocker.patch("backend.main.broker", mock_broker)
 
         from backend.main import app
+
         return app
 
     @pytest.mark.unit
@@ -99,7 +98,6 @@ class TestRoutersRegistered:
 
 
 class TestLifespan:
-
     @pytest.mark.unit
     def test_broker_startup_called_on_start(self, mocker):
         """broker.startup() est appelé au démarrage si pas worker process."""
@@ -110,6 +108,7 @@ class TestLifespan:
         mocker.patch("backend.main.broker", mock_broker)
 
         from backend.main import app
+
         with TestClient(app):
             mock_broker.startup.assert_called_once()
 
@@ -123,6 +122,7 @@ class TestLifespan:
         mocker.patch("backend.main.broker", mock_broker)
 
         from backend.main import app
+
         with TestClient(app):
             pass
 
@@ -138,5 +138,6 @@ class TestLifespan:
         mocker.patch("backend.main.broker", mock_broker)
 
         from backend.main import app
+
         with TestClient(app):
             mock_broker.startup.assert_not_called()

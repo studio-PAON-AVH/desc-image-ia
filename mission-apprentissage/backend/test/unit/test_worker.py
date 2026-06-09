@@ -26,9 +26,7 @@ def make_async_session_cm(session_mock):
 
 
 class TestRecoverStuckTasks:
-
     class TestNoStuckTasks:
-
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_no_tasks_does_nothing(self, mocker):
@@ -38,17 +36,22 @@ class TestRecoverStuckTasks:
             mock_result.scalars.return_value.all.return_value = []
             mock_session.execute = AsyncMock(return_value=mock_result)
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
-            mock_update = mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
             mocker.patch("backend.worker.worker.r")
 
             from backend.worker.worker import recover_stuck_tasks
+
             await recover_stuck_tasks(state=None)
 
             mock_update.assert_not_called()
 
     class TestStuckTaskWithNoRedisData:
-
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_no_redis_data_marks_failed(self, mocker):
@@ -62,18 +65,23 @@ class TestRecoverStuckTasks:
             mock_result.scalars.return_value.all.return_value = [mock_task]
             mock_session.execute = AsyncMock(return_value=mock_result)
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
             mock_redis = mocker.patch("backend.worker.worker.r")
             mock_redis.get.return_value = None
-            mock_update = mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
 
             from backend.worker.worker import recover_stuck_tasks
+
             await recover_stuck_tasks(state=None)
 
             mock_update.assert_called_once_with(mock_session, 1, "failed")
 
     class TestStuckTaskWithRedisDataAndMissingFile:
-
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_file_not_found_marks_failed(self, mocker):
@@ -92,13 +100,19 @@ class TestRecoverStuckTasks:
             mock_result_epub.scalar_one_or_none.return_value = mock_epub
             mock_session.execute = AsyncMock(side_effect=[mock_result_tasks, mock_result_epub])
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
             mock_redis = mocker.patch("backend.worker.worker.r")
             mock_redis.get.return_value = json.dumps({"epub_path": "/path/to/file.epub"}).encode()
             mocker.patch("os.path.exists", return_value=False)
-            mock_update = mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
 
             from backend.worker.worker import recover_stuck_tasks
+
             await recover_stuck_tasks(state=None)
 
             mock_update.assert_called_once_with(mock_session, 1, "failed")
@@ -121,13 +135,19 @@ class TestRecoverStuckTasks:
             mock_result_epub.scalar_one_or_none.return_value = None
             mock_session.execute = AsyncMock(side_effect=[mock_result_tasks, mock_result_epub])
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
             mock_redis = mocker.patch("backend.worker.worker.r")
             mock_redis.get.return_value = json.dumps({"epub_path": "/path/to/file.epub"}).encode()
             mocker.patch("os.path.exists", return_value=True)
-            mock_update = mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
 
             from backend.worker.worker import recover_stuck_tasks
+
             await recover_stuck_tasks(state=None)
 
             mock_update.assert_called_once_with(mock_session, 1, "failed")
@@ -153,19 +173,24 @@ class TestRecoverStuckTasks:
             mock_result_epub.scalar_one_or_none.return_value = mock_epub
             mock_session.execute = AsyncMock(side_effect=[mock_result_tasks, mock_result_epub])
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
             mock_redis = mocker.patch("backend.worker.worker.r")
             mock_redis.get.return_value = json.dumps({"autre_cle": "valeur"}).encode()
             mocker.patch("os.path.exists", return_value=True)
-            mock_update = mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
 
             from backend.worker.worker import recover_stuck_tasks
+
             await recover_stuck_tasks(state=None)
 
             mock_update.assert_called_once_with(mock_session, 1, "failed")
 
     class TestStuckTaskRecovered:
-
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_recovers_task_successfully(self, mocker):
@@ -184,13 +209,19 @@ class TestRecoverStuckTasks:
             mock_result_epub.scalar_one_or_none.return_value = mock_epub
             mock_session.execute = AsyncMock(side_effect=[mock_result_tasks, mock_result_epub])
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
             mock_redis = mocker.patch("backend.worker.worker.r")
             mock_redis.get.return_value = json.dumps({"epub_path": "/path/to/file.epub"}).encode()
             mocker.patch("os.path.exists", return_value=True)
-            mock_update = mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
 
             from backend.worker.worker import process_epub_describe, recover_stuck_tasks
+
             mock_kiq = mocker.patch.object(process_epub_describe, "kiq", new_callable=AsyncMock)
 
             await recover_stuck_tasks(state=None)
@@ -200,9 +231,7 @@ class TestRecoverStuckTasks:
 
 
 class TestProcessEpubDescribe:
-
     class TestHappyPath:
-
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_full_pipeline_success(self, mocker):
@@ -215,7 +244,11 @@ class TestProcessEpubDescribe:
             image_paths = ["/tmp/img1.png", "/tmp/img2.png"]
             temp_folder = "/tmp/epub_extract"
             fake_images = [MagicMock(), MagicMock()]
-            fake_descriptions = {"images": {"image_0": {}, "image_1": {}}, "total_images": 2, "time": 1.0}
+            fake_descriptions = {
+                "images": {"image_0": {}, "image_1": {}},
+                "total_images": 2,
+                "time": 1.0,
+            }
 
             mock_session = AsyncMock()
             mock_model_blip = MagicMock()
@@ -228,20 +261,42 @@ class TestProcessEpubDescribe:
             mock_model_git.name = "GIT Large"
             mock_model_git.id = 3
             mock_models_result = MagicMock()
-            mock_models_result.scalars.return_value.all.return_value = [mock_model_blip, mock_model_florence, mock_model_git]
+            mock_models_result.scalars.return_value.all.return_value = [
+                mock_model_blip,
+                mock_model_florence,
+                mock_model_git,
+            ]
             mock_session.execute = AsyncMock(return_value=mock_models_result)
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
             mock_redis = mocker.patch("backend.worker.worker.r")
-            mocker.patch("backend.worker.worker.extract_images_epub", return_value=(image_paths, temp_folder))
-            mock_save_images = mocker.patch("backend.worker.worker.save_images", new_callable=AsyncMock, return_value=fake_images)
-            mock_get_describe = mocker.patch("backend.worker.worker.get_image_describe", new_callable=AsyncMock, return_value=fake_descriptions)
-            mock_save_descriptions = mocker.patch("backend.worker.worker.save_image_descriptions", new_callable=AsyncMock)
-            mock_update = mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
+            mocker.patch(
+                "backend.worker.worker.extract_images_epub", return_value=(image_paths, temp_folder)
+            )
+            mock_save_images = mocker.patch(
+                "backend.worker.worker.save_images",
+                new_callable=AsyncMock,
+                return_value=fake_images,
+            )
+            mock_get_describe = mocker.patch(
+                "backend.worker.worker.get_image_describe",
+                new_callable=AsyncMock,
+                return_value=fake_descriptions,
+            )
+            mock_save_descriptions = mocker.patch(
+                "backend.worker.worker.save_image_descriptions", new_callable=AsyncMock
+            )
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
             mock_rmtree = mocker.patch("backend.worker.worker.shutil.rmtree")
             mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake_image_bytes"))
 
             from backend.worker.worker import process_epub_describe
+
             await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
             mock_update.assert_any_call(mock_session, db_task_id, "in_progress")
@@ -276,16 +331,30 @@ class TestProcessEpubDescribe:
             mock_models_result.scalars.return_value.all.return_value = []
             mock_session.execute = AsyncMock(return_value=mock_models_result)
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
             mocker.patch("backend.worker.worker.r")
-            mocker.patch("backend.worker.worker.extract_images_epub", return_value=(image_paths, None))
-            mocker.patch("backend.worker.worker.save_images", new_callable=AsyncMock, return_value=fake_images)
-            mock_get_describe = mocker.patch("backend.worker.worker.get_image_describe", new_callable=AsyncMock, return_value=fake_descriptions)
+            mocker.patch(
+                "backend.worker.worker.extract_images_epub", return_value=(image_paths, None)
+            )
+            mocker.patch(
+                "backend.worker.worker.save_images",
+                new_callable=AsyncMock,
+                return_value=fake_images,
+            )
+            mock_get_describe = mocker.patch(
+                "backend.worker.worker.get_image_describe",
+                new_callable=AsyncMock,
+                return_value=fake_descriptions,
+            )
             mocker.patch("backend.worker.worker.save_image_descriptions", new_callable=AsyncMock)
             mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
             mocker.patch("builtins.open", mocker.mock_open(read_data=fake_img_bytes))
 
             from backend.worker.worker import process_epub_describe
+
             await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
             img_list_arg = mock_get_describe.call_args[0][0]
@@ -310,23 +379,36 @@ class TestProcessEpubDescribe:
             mock_models_result.scalars.return_value.all.return_value = []
             mock_session.execute = AsyncMock(return_value=mock_models_result)
 
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
             mocker.patch("backend.worker.worker.r")
-            mocker.patch("backend.worker.worker.extract_images_epub", return_value=(image_paths, None))
-            mocker.patch("backend.worker.worker.save_images", new_callable=AsyncMock, return_value=fake_images)
-            mocker.patch("backend.worker.worker.get_image_describe", new_callable=AsyncMock, return_value=fake_descriptions)
+            mocker.patch(
+                "backend.worker.worker.extract_images_epub", return_value=(image_paths, None)
+            )
+            mocker.patch(
+                "backend.worker.worker.save_images",
+                new_callable=AsyncMock,
+                return_value=fake_images,
+            )
+            mocker.patch(
+                "backend.worker.worker.get_image_describe",
+                new_callable=AsyncMock,
+                return_value=fake_descriptions,
+            )
             mocker.patch("backend.worker.worker.save_image_descriptions", new_callable=AsyncMock)
             mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
             mock_rmtree = mocker.patch("backend.worker.worker.shutil.rmtree")
             mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake"))
 
             from backend.worker.worker import process_epub_describe
+
             await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
             mock_rmtree.assert_not_called()
 
     class TestErrorHandling:
-
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_exception_marks_task_failed(self, mocker):
@@ -337,12 +419,21 @@ class TestProcessEpubDescribe:
             epub_id = 7
 
             mock_session = AsyncMock()
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
-            mocker.patch("backend.worker.worker.extract_images_epub", side_effect=RuntimeError("Fichier corrompu"))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
+            mocker.patch(
+                "backend.worker.worker.extract_images_epub",
+                side_effect=RuntimeError("Fichier corrompu"),
+            )
             mocker.patch("backend.worker.worker.r")
-            mock_update = mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
 
             from backend.worker.worker import process_epub_describe
+
             with pytest.raises(RuntimeError):
                 await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
@@ -359,12 +450,18 @@ class TestProcessEpubDescribe:
             error_message = "Fichier corrompu"
 
             mock_session = AsyncMock()
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
-            mocker.patch("backend.worker.worker.extract_images_epub", side_effect=RuntimeError(error_message))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
+            mocker.patch(
+                "backend.worker.worker.extract_images_epub", side_effect=RuntimeError(error_message)
+            )
             mock_redis = mocker.patch("backend.worker.worker.r")
             mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
 
             from backend.worker.worker import process_epub_describe
+
             with pytest.raises(RuntimeError):
                 await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
@@ -383,11 +480,18 @@ class TestProcessEpubDescribe:
             epub_id = 7
 
             mock_session = AsyncMock()
-            mocker.patch("backend.worker.worker.async_session", return_value=make_async_session_cm(mock_session))
-            mocker.patch("backend.worker.worker.extract_images_epub", side_effect=ValueError("Erreur inattendue"))
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
+            mocker.patch(
+                "backend.worker.worker.extract_images_epub",
+                side_effect=ValueError("Erreur inattendue"),
+            )
             mocker.patch("backend.worker.worker.r")
             mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
 
             from backend.worker.worker import process_epub_describe
+
             with pytest.raises(ValueError, match="Erreur inattendue"):
                 await process_epub_describe(epub_path, task_id, db_task_id, epub_id)

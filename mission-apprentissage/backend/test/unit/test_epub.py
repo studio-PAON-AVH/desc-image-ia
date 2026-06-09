@@ -3,14 +3,22 @@ import base64
 import httpx
 from dotenv import load_dotenv
 from unittest.mock import AsyncMock, MagicMock
-from fastapi import HTTPException
-from fastapi.responses import FileResponse
-from backend.utils.image_request import ImageRequest
-from backend.services.epub_service import get_image_describe, extract_images_epub, describe_images_epub, save_epub, save_task, save_images, save_image_descriptions, update_task_status
-from backend.database import Images, ImageDescription
-from backend.middlewares.epub_middleware import already_exists as epub_already_exists
+from backend.utils import ImageRequest
+from backend.epub.service import (
+    get_image_describe,
+    extract_images_epub,
+    describe_images_epub,
+    save_epub,
+    save_task,
+    save_images,
+    save_image_descriptions,
+    update_task_status,
+)
+from backend.core.database.config import Images, ImageDescription
+from backend.epub.middleware import already_exists as epub_already_exists
 
 load_dotenv()
+
 
 @pytest.fixture
 def mock_user():
@@ -18,12 +26,15 @@ def mock_user():
     user.id = 1
     return user
 
+
 @pytest.fixture
 def mock_upload():
     upload = MagicMock()
     upload.filename = "test.epub"
     upload.file = MagicMock()
+    upload.read = AsyncMock(return_value=b"PK\x03\x04" + b"\x00" * 100)
     return upload
+
 
 @pytest.fixture
 def session(mocker):
@@ -34,8 +45,8 @@ def session(mocker):
     mock.execute = mocker.AsyncMock(return_value=None)
     return mock
 
-class TestEpubService:
 
+class TestEpubService:
     class TestGetImageDescribe:
         @pytest.mark.unit
         @pytest.mark.asyncio
@@ -49,19 +60,18 @@ class TestEpubService:
                             "success": True,
                             "english_description": "A cat",
                             "french_description": "Un chat",
-                            "generation_time": 0.5
+                            "generation_time": 0.5,
                         },
                         {
                             "success": True,
                             "english_description": "A dog",
                             "french_description": "Un chien",
-                            "generation_time": 0.5
-                        }
-
+                            "generation_time": 0.5,
+                        },
                     ]
-                }
+                },
             )
-            mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
+            mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
 
             img1_b64 = base64.b64encode(b"fake_image_data_1").decode("utf-8")
             img2_b64 = base64.b64encode(b"fake_image_data_2").decode("utf-8")
@@ -73,8 +83,18 @@ class TestEpubService:
             assert "images" in result
             assert "total_images" in result
             assert "time" in result
-            assert result["images"]["image_0"].keys() == {"index", "salesforce_blip", "florence2", "git_large"}
-            assert result["images"]["image_1"].keys() == {"index", "salesforce_blip", "florence2", "git_large"}
+            assert result["images"]["image_0"].keys() == {
+                "index",
+                "salesforce_blip",
+                "florence2",
+                "git_large",
+            }
+            assert result["images"]["image_1"].keys() == {
+                "index",
+                "salesforce_blip",
+                "florence2",
+                "git_large",
+            }
             assert isinstance(result["time"], float)
             assert result["time"] >= 0
 
@@ -82,13 +102,8 @@ class TestEpubService:
         @pytest.mark.asyncio
         async def test_get_image_describe_return_not_correct_structure(self, mocker):
             """Test que get_image_describe retourne toujours la bonne structure même si le modèle répond mal."""
-            mocker_response = AsyncMock(
-                status_code=200,
-                json=lambda: {
-                    "wrong_key": "wrong_value"
-                }
-            )
-            mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
+            mocker_response = AsyncMock(status_code=200, json=lambda: {"wrong_key": "wrong_value"})
+            mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
 
             img1_b64 = base64.b64encode(b"fake_image_data_1").decode("utf-8")
             img_list = [img1_b64]
@@ -104,7 +119,7 @@ class TestEpubService:
         async def test_get_image_describe_error_handling(self, mocker):
             """Test de la gestion des erreurs dans get_image_describe."""
 
-            mocker.patch('httpx.AsyncClient.post', side_effect=Exception("Service unavailable"))
+            mocker.patch("httpx.AsyncClient.post", side_effect=Exception("Service unavailable"))
 
             img1_b64 = base64.b64encode(b"fake_image_data_1").decode("utf-8")
             img_list = [img1_b64]
@@ -120,7 +135,7 @@ class TestEpubService:
         @pytest.mark.asyncio
         async def test_get_image_describe_request_error(self, mocker):
             """Test de la gestion des erreurs de requête dans get_image_describe."""
-            mocker.patch('httpx.AsyncClient.post', side_effect=httpx.RequestError("Request error"))
+            mocker.patch("httpx.AsyncClient.post", side_effect=httpx.RequestError("Request error"))
 
             img1_b64 = base64.b64encode(b"fake_image_data_1").decode("utf-8")
             result = await get_image_describe([img1_b64])
@@ -138,13 +153,8 @@ class TestEpubService:
         @pytest.mark.asyncio
         async def test_get_image_describe_empty_list(self, mocker):
             """Test de get_image_describe avec une liste d'images vide."""
-            mocker_response = AsyncMock(
-                status_code=200,
-                json=lambda: {
-                    "results": []
-                }
-            )
-            mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
+            mocker_response = AsyncMock(status_code=200, json=lambda: {"results": []})
+            mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
 
             img_list = []
             result = await get_image_describe(img_list)
@@ -165,12 +175,12 @@ class TestEpubService:
                             "success": True,
                             "english_description": "A cat",
                             "french_description": "Un chat",
-                            "generation_time": 0.3
+                            "generation_time": 0.3,
                         }
                     ]
-                }
+                },
             )
-            post_mock = mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
+            post_mock = mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
 
             img_1_bs64 = base64.b64encode(b"fake_image_data_1").decode("utf-8")
             img_2_bs64 = base64.b64encode(b"fake_image_data_2").decode("utf-8")
@@ -188,18 +198,21 @@ class TestEpubService:
                 status_code=200,
                 json=lambda: {
                     "results": [
-                        {"success": True,
+                        {
+                            "success": True,
                             "english_description": f"desc {i}",
                             "french_description": f"desc fr {i}",
-                            "generation_time": 0.4
+                            "generation_time": 0.4,
                         }
                         for i in range(5)
                     ]
-                }
+                },
             )
-            post_mock = mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
+            post_mock = mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
 
-            img_bs64_list = [base64.b64encode(f"fake_image_data_{i}".encode()).decode("utf-8") for i in range(12)]
+            img_bs64_list = [
+                base64.b64encode(f"fake_image_data_{i}".encode()).decode("utf-8") for i in range(12)
+            ]
             result = await get_image_describe(img_bs64_list)
 
             assert post_mock.call_count == 9
@@ -213,18 +226,21 @@ class TestEpubService:
                 status_code=200,
                 json=lambda: {
                     "results": [
-                        {"success": True,
+                        {
+                            "success": True,
                             "english_description": "desc",
                             "french_description": "desc fr",
-                            "generation_time": 0.4
+                            "generation_time": 0.4,
                         }
                     ]
-                }
+                },
             )
 
-            img_bs64_list = [base64.b64encode(f"fake_image_data_{i}".encode()).decode("utf-8") for i in range(7)]
+            img_bs64_list = [
+                base64.b64encode(f"fake_image_data_{i}".encode()).decode("utf-8") for i in range(7)
+            ]
 
-            post_mock = mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
+            post_mock = mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
 
             result = await get_image_describe(img_bs64_list)
 
@@ -235,12 +251,9 @@ class TestEpubService:
         @pytest.mark.asyncio
         async def test_get_image_describe_model_returns_error(self, mocker):
             """Test la gestion des erreurs retournées par les modèles dans get_image_describe."""
-            mocker_response = AsyncMock(
-                status_code=500,
-                text="Internal Server Error"
-            )
+            mocker_response = AsyncMock(status_code=500, text="Internal Server Error")
 
-            mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
+            mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
 
             img1_b64 = base64.b64encode(b"fake_image_data_1").decode("utf-8")
             img_list = [img1_b64]
@@ -258,7 +271,8 @@ class TestEpubService:
         async def test_get_image_describe_batch_size_value_error(self, mocker):
             """Test la gestion d'une valeur de batch_size invalide dans get_image_describe."""
             import os
-            mocker.patch.dict(os.environ, {'BATCH_SIZE': '-1'})
+
+            mocker.patch.dict(os.environ, {"BATCH_SIZE": "-1"})
             img_bs64_list = [base64.b64encode(b"fake_image_data").decode("utf-8")]
 
             with pytest.raises(ValueError):
@@ -269,12 +283,22 @@ class TestEpubService:
         async def test_get_image_describe_batch_size_invalid_string(self, mocker):
             """Test que BATCH_SIZE non numérique utilise le fallback à 5."""
             import os
+
             mocker_response = AsyncMock(
                 status_code=200,
-                json=lambda: {"results": [{"success": True, "english_description": "desc", "french_description": "desc fr", "generation_time": 0.4}]}
+                json=lambda: {
+                    "results": [
+                        {
+                            "success": True,
+                            "english_description": "desc",
+                            "french_description": "desc fr",
+                            "generation_time": 0.4,
+                        }
+                    ]
+                },
             )
-            mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
-            mocker.patch.dict(os.environ, {'BATCH_SIZE': 'abc'})
+            mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
+            mocker.patch.dict(os.environ, {"BATCH_SIZE": "abc"})
 
             img_bs64_list = [base64.b64encode(b"fake_image_data").decode("utf-8")]
             result = await get_image_describe(img_bs64_list)
@@ -287,12 +311,22 @@ class TestEpubService:
         async def test_get_image_describe_batch_max_invalid_string(self, mocker):
             """Test que BATCH_MAX non numérique utilise le fallback à 200."""
             import os
+
             mocker_response = AsyncMock(
                 status_code=200,
-                json=lambda: {"results": [{"success": True, "english_description": "desc", "french_description": "desc fr", "generation_time": 0.4}]}
+                json=lambda: {
+                    "results": [
+                        {
+                            "success": True,
+                            "english_description": "desc",
+                            "french_description": "desc fr",
+                            "generation_time": 0.4,
+                        }
+                    ]
+                },
             )
-            mocker.patch('httpx.AsyncClient.post', return_value=mocker_response)
-            mocker.patch.dict(os.environ, {'BATCH_MAX': 'abc'})
+            mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
+            mocker.patch.dict(os.environ, {"BATCH_MAX": "abc"})
 
             img_bs64_list = [base64.b64encode(b"fake_image_data").decode("utf-8")]
             result = await get_image_describe(img_bs64_list)
@@ -339,9 +373,11 @@ class TestEpubService:
             mock_book = mocker.Mock()
             mock_book.get_items_of_type.return_value = [mock_item, mock_item]
 
-            mocker.patch('backend.services.epub_service.epub.read_epub', return_value=mock_book)
+            mocker.patch("backend.epub.service.epub.read_epub", return_value=mock_book)
 
-            result_paths, result_dir = extract_images_epub("some/path/to/book.epub", output_dir=str(tmp_path))
+            result_paths, result_dir = extract_images_epub(
+                "some/path/to/book.epub", output_dir=str(tmp_path)
+            )
 
             assert isinstance(result_paths, list)
             assert len(result_paths) == 2
@@ -350,7 +386,9 @@ class TestEpubService:
         @pytest.mark.unit
         def test_extract_images_epub_invalid(self, mocker):
             """Test de l'extraction d'images d'un EPUB invalide (exception propagée)."""
-            mocker.patch('backend.services.epub_service.epub.read_epub', side_effect=Exception("Invalid EPUB file"))
+            mocker.patch(
+                "backend.epub.service.epub.read_epub", side_effect=Exception("Invalid EPUB file")
+            )
 
             with pytest.raises(Exception):
                 extract_images_epub("invalid/path/to/book.epub")
@@ -360,7 +398,7 @@ class TestEpubService:
             """Test de l'extraction d'images d'un EPUB sans images."""
             mock_book = mocker.Mock()
             mock_book.get_items_of_type.return_value = []
-            mocker.patch('backend.services.epub_service.epub.read_epub', return_value=mock_book)
+            mocker.patch("backend.epub.service.epub.read_epub", return_value=mock_book)
 
             result_paths, result_dir = extract_images_epub("some/path/to/book.epub")
 
@@ -371,7 +409,7 @@ class TestEpubService:
         @pytest.mark.unit
         def test_extract_images_epub_error(self, mocker):
             """Test de la gestion des erreurs lors de l'extraction d'images d'un EPUB."""
-            mocker.patch('backend.services.epub_service.epub.read_epub', side_effect=Exception("Read error"))
+            mocker.patch("backend.epub.service.epub.read_epub", side_effect=Exception("Read error"))
 
             with pytest.raises(Exception):
                 extract_images_epub("some/path/to/book.epub")
@@ -386,11 +424,15 @@ class TestEpubService:
             mock_book = mocker.Mock()
             mock_book.get_items_of_type.return_value = [mock_item]
 
-            mocker.patch('backend.services.epub_service.epub.read_epub', return_value=mock_book)
-            mock_mkdtemp = mocker.patch('backend.services.epub_service.tempfile.mkdtemp', return_value="/tmp/epub_test")
-            mocker.patch('builtins.open', mocker.mock_open())
+            mocker.patch("backend.epub.service.epub.read_epub", return_value=mock_book)
+            mock_mkdtemp = mocker.patch(
+                "backend.epub.service.tempfile.mkdtemp", return_value="/tmp/epub_test"
+            )
+            mocker.patch("builtins.open", mocker.mock_open())
 
-            result_paths, result_dir = extract_images_epub("some/path/to/book.epub")  # pas de output_dir
+            result_paths, result_dir = extract_images_epub(
+                "some/path/to/book.epub"
+            )  # pas de output_dir
 
             mock_mkdtemp.assert_called_once_with(prefix="epub_images_")
             assert result_dir == "/tmp/epub_test"
@@ -403,8 +445,9 @@ class TestEpubService:
             img_file = tmp_path / "cat.jpg"
             img_file.write_bytes(b"fake_image_bytes")
 
-            mocker.patch('backend.services.epub_service.extract_images_epub',
-                        return_value=([str(img_file)], None))
+            mocker.patch(
+                "backend.epub.service.extract_images_epub", return_value=([str(img_file)], None)
+            )
 
             expected = {
                 "images": {
@@ -413,25 +456,28 @@ class TestEpubService:
                         "salesforce_blip": {
                             "english_description": "A cat",
                             "french_description": "Un chat",
-                            "generation_time": 0.5
+                            "generation_time": 0.5,
                         },
                         "florence2": {
                             "english_description": "A feline",
                             "french_description": "Un félin",
-                            "generation_time": 0.4
+                            "generation_time": 0.4,
                         },
                         "git_large": {
                             "english_description": "A domestic cat",
                             "french_description": "Un chat domestique",
-                            "generation_time": 0.6
-                        }
+                            "generation_time": 0.6,
+                        },
                     }
                 },
                 "total_images": 1,
-                "time": 1.5
+                "time": 1.5,
             }
-            mocker.patch('backend.services.epub_service.get_image_describe',
-                        new_callable=AsyncMock, return_value=expected)
+            mocker.patch(
+                "backend.epub.service.get_image_describe",
+                new_callable=AsyncMock,
+                return_value=expected,
+            )
 
             result = await describe_images_epub("some/path/to/book.epub")
 
@@ -445,8 +491,7 @@ class TestEpubService:
         @pytest.mark.asyncio
         async def test_describe_images_epub_no_images(self, mocker):
             """Test quand l'EPUB ne contient pas d'images."""
-            mocker.patch('backend.services.epub_service.extract_images_epub',
-                        return_value=([], None))
+            mocker.patch("backend.epub.service.extract_images_epub", return_value=([], None))
 
             result = await describe_images_epub("some/path/to/book.epub")
 
@@ -457,8 +502,9 @@ class TestEpubService:
         @pytest.mark.asyncio
         async def test_describe_images_epub_extract_error(self, mocker):
             """Test quand extract_images_epub lève une exception."""
-            mocker.patch('backend.services.epub_service.extract_images_epub',
-                        side_effect=Exception("EPUB illisible"))
+            mocker.patch(
+                "backend.epub.service.extract_images_epub", side_effect=Exception("EPUB illisible")
+            )
 
             with pytest.raises(Exception):
                 await describe_images_epub("some/path/to/book.epub")
@@ -470,10 +516,14 @@ class TestEpubService:
             img_file = tmp_path / "cat.jpg"
             img_file.write_bytes(b"fake_image_bytes")
 
-            mocker.patch('backend.services.epub_service.extract_images_epub',
-                        return_value=([str(img_file)], None))
-            mocker.patch('backend.services.epub_service.get_image_describe',
-                        new_callable=AsyncMock, side_effect=Exception("Model error"))
+            mocker.patch(
+                "backend.epub.service.extract_images_epub", return_value=([str(img_file)], None)
+            )
+            mocker.patch(
+                "backend.epub.service.get_image_describe",
+                new_callable=AsyncMock,
+                side_effect=Exception("Model error"),
+            )
 
             with pytest.raises(Exception):
                 await describe_images_epub("some/path/to/book.epub")
@@ -485,8 +535,9 @@ class TestEpubService:
             img_file = tmp_path / "cat.jpg"
             img_file.write_bytes(b"fake_image_bytes")
 
-            mocker.patch('backend.services.epub_service.extract_images_epub',
-                        return_value=([str(img_file)], None))
+            mocker.patch(
+                "backend.epub.service.extract_images_epub", return_value=([str(img_file)], None)
+            )
 
             expected = {
                 "images": {
@@ -495,21 +546,24 @@ class TestEpubService:
                         "salesforce_blip": {
                             "english_description": "A cat",
                             "french_description": "Un chat",
-                            "generation_time": 0.5
+                            "generation_time": 0.5,
                         },
                         "florence2": None,
                         "git_large": {
                             "english_description": "A domestic cat",
                             "french_description": "Un chat domestique",
-                            "generation_time": 0.6
-                        }
+                            "generation_time": 0.6,
+                        },
                     }
                 },
                 "total_images": 1,
-                "time": 1.5
+                "time": 1.5,
             }
-            mocker.patch('backend.services.epub_service.get_image_describe',
-                        new_callable=AsyncMock, return_value=expected)
+            mocker.patch(
+                "backend.epub.service.get_image_describe",
+                new_callable=AsyncMock,
+                return_value=expected,
+            )
 
             result = await describe_images_epub("some/path/to/book.epub")
 
@@ -528,11 +582,15 @@ class TestEpubService:
             img_file.write_bytes(b"fake_image_bytes")
 
             temp_dir = str(tmp_path)
-            mocker.patch('backend.services.epub_service.extract_images_epub',
-                        return_value=([str(img_file)], temp_dir))
-            mock_rmtree = mocker.patch('backend.services.epub_service.shutil.rmtree')
-            mocker.patch('backend.services.epub_service.get_image_describe',
-                        new_callable=AsyncMock, return_value={"images": {}, "total_images": 1, "time": 0.1})
+            mocker.patch(
+                "backend.epub.service.extract_images_epub", return_value=([str(img_file)], temp_dir)
+            )
+            mock_rmtree = mocker.patch("backend.epub.service.shutil.rmtree")
+            mocker.patch(
+                "backend.epub.service.get_image_describe",
+                new_callable=AsyncMock,
+                return_value={"images": {}, "total_images": 1, "time": 0.1},
+            )
 
             await describe_images_epub("some/path/to/book.epub")
 
@@ -640,28 +698,64 @@ class TestEpubService:
         async def test_save_image_descriptions_success(self, session):
             """Test de la sauvegarde des descriptions d'images dans la base de données."""
             img_list = [
-                Images(task_id=1, epub_id=1, image_file_name="fake_image_path1.jpg", image_position_in_epub=0),
-                Images(task_id=1, epub_id=1, image_file_name="fake_image_path2.jpg", image_position_in_epub=1)
+                Images(
+                    task_id=1,
+                    epub_id=1,
+                    image_file_name="fake_image_path1.jpg",
+                    image_position_in_epub=0,
+                ),
+                Images(
+                    task_id=1,
+                    epub_id=1,
+                    image_file_name="fake_image_path2.jpg",
+                    image_position_in_epub=1,
+                ),
             ]
             results = {
                 "images": {
                     "image_0": {
-                        "salesforce_blip": {"english_description": "A cat", "french_description": "Un chat", "generation_time": 0.5},
-                        "florence2": {"english_description": "A feline", "french_description": "Un félin", "generation_time": 0.4},
-                        "git_large": {"english_description": "A domestic cat", "french_description": "Un chat domestique", "generation_time": 0.6},
+                        "salesforce_blip": {
+                            "english_description": "A cat",
+                            "french_description": "Un chat",
+                            "generation_time": 0.5,
+                        },
+                        "florence2": {
+                            "english_description": "A feline",
+                            "french_description": "Un félin",
+                            "generation_time": 0.4,
+                        },
+                        "git_large": {
+                            "english_description": "A domestic cat",
+                            "french_description": "Un chat domestique",
+                            "generation_time": 0.6,
+                        },
                     },
                     "image_1": {
-                        "salesforce_blip": {"english_description": "A dog", "french_description": "Un chien", "generation_time": 0.5},
-                        "florence2": {"english_description": "A canine", "french_description": "Un canidé", "generation_time": 0.4},
-                        "git_large": {"english_description": "A domestic dog", "french_description": "Un chien domestique", "generation_time": 0.6},
-                    }
+                        "salesforce_blip": {
+                            "english_description": "A dog",
+                            "french_description": "Un chien",
+                            "generation_time": 0.5,
+                        },
+                        "florence2": {
+                            "english_description": "A canine",
+                            "french_description": "Un canidé",
+                            "generation_time": 0.4,
+                        },
+                        "git_large": {
+                            "english_description": "A domestic dog",
+                            "french_description": "Un chien domestique",
+                            "generation_time": 0.6,
+                        },
+                    },
                 },
                 "total_images": 2,
-                "time": 1.5
+                "time": 1.5,
             }
             model_ia_mapping = {"salesforce_blip": 1, "florence2": 2, "git_large": 3}
 
-            await save_image_descriptions(session, images=img_list, results=results, model_ia_mapping=model_ia_mapping)
+            await save_image_descriptions(
+                session, images=img_list, results=results, model_ia_mapping=model_ia_mapping
+            )
 
             # 2 images × 3 modèles = 6 descriptions
             assert session.add.call_count == len(img_list) * len(model_ia_mapping)
@@ -680,23 +774,42 @@ class TestEpubService:
             """Test de la gestion des erreurs lors du commit."""
             session.commit.side_effect = Exception("Database error")
             img_list = [
-                Images(task_id=1, epub_id=1, image_file_name="fake_image_path1.jpg", image_position_in_epub=0)
+                Images(
+                    task_id=1,
+                    epub_id=1,
+                    image_file_name="fake_image_path1.jpg",
+                    image_position_in_epub=0,
+                )
             ]
             results = {
                 "images": {
                     "image_0": {
-                        "salesforce_blip": {"english_description": "A cat", "french_description": "Un chat", "generation_time": 0.5},
-                        "florence2": {"english_description": "A feline", "french_description": "Un félin", "generation_time": 0.4},
-                        "git_large": {"english_description": "A domestic cat", "french_description": "Un chat domestique", "generation_time": 0.6},
+                        "salesforce_blip": {
+                            "english_description": "A cat",
+                            "french_description": "Un chat",
+                            "generation_time": 0.5,
+                        },
+                        "florence2": {
+                            "english_description": "A feline",
+                            "french_description": "Un félin",
+                            "generation_time": 0.4,
+                        },
+                        "git_large": {
+                            "english_description": "A domestic cat",
+                            "french_description": "Un chat domestique",
+                            "generation_time": 0.6,
+                        },
                     }
                 },
                 "total_images": 1,
-                "time": 1.5
+                "time": 1.5,
             }
             model_ia_mapping = {"salesforce_blip": 1, "florence2": 2, "git_large": 3}
 
             with pytest.raises(Exception):
-                await save_image_descriptions(session, images=img_list, results=results, model_ia_mapping=model_ia_mapping)
+                await save_image_descriptions(
+                    session, images=img_list, results=results, model_ia_mapping=model_ia_mapping
+                )
 
     class TestUpdateTaskStatus:
         @pytest.mark.unit
@@ -735,152 +848,8 @@ class TestEpubService:
             with pytest.raises(Exception):
                 await update_task_status(session, db_task_id=1, status="completed")
 
-class TestEpubController:
-
-    class TestUploadEpub:
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_upload_epub_success(self, mocker, mock_user, mock_upload, session):
-            """Test upload valide : retourne un task_id."""
-            mocker.patch('backend.controllers.epub_controller.already_exists', new=AsyncMock(return_value=False))
-            mock_ntf = MagicMock()
-            mock_ntf.name = "/tmp/test.epub"
-            mocker.patch('backend.controllers.epub_controller.tempfile.NamedTemporaryFile', return_value=mock_ntf)
-            mocker.patch('backend.controllers.epub_controller.shutil.copyfileobj')
-            mocker.patch('builtins.open', mocker.mock_open())
-
-            mock_task = MagicMock()
-            mock_task.id = 42
-            mock_epub = MagicMock()
-            mock_epub.id = 7
-            mocker.patch('backend.controllers.epub_controller.save_task', new=AsyncMock(return_value=mock_task))
-            mocker.patch('backend.controllers.epub_controller.save_epub', new=AsyncMock(return_value=mock_epub))
-            mock_kiq = AsyncMock()
-            mocker.patch('backend.controllers.epub_controller.process_epub_describe.kiq', mock_kiq)
-            mock_redis = MagicMock()
-            mocker.patch('backend.controllers.epub_controller.r', mock_redis)
-
-            from backend.controllers.epub_controller import upload_epub
-            result = await upload_epub(current_user=mock_user, upload=mock_upload, session=session)
-
-            assert "task_id" in result
-            assert mock_redis.set.called
-            mock_kiq.assert_called_once()
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_upload_epub_invalid_extension(self, mock_user, session):
-            """Test upload avec extension invalide → HTTPException 400."""
-            upload = MagicMock()
-            upload.filename = "test.pdf"
-
-            from backend.controllers.epub_controller import upload_epub
-            with pytest.raises(HTTPException) as exc_info:
-                await upload_epub(current_user=mock_user, upload=upload, session=session)
-
-            assert exc_info.value.status_code == 400
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_upload_epub_already_exists(self, mocker, mock_user, mock_upload, session):
-            """Test upload d'un fichier déjà existant → HTTPException 409."""
-            mocker.patch('backend.controllers.epub_controller.already_exists', new=AsyncMock(return_value=True))
-
-            from backend.controllers.epub_controller import upload_epub
-            with pytest.raises(HTTPException) as exc_info:
-                await upload_epub(current_user=mock_user, upload=mock_upload, session=session)
-
-            assert exc_info.value.status_code == 409
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_upload_epub_save_task_error(self, mocker, mock_user, mock_upload, session):
-            """Test upload quand save_task lève une exception."""
-            mocker.patch('backend.controllers.epub_controller.already_exists', new=AsyncMock(return_value=False))
-            mock_ntf = MagicMock()
-            mock_ntf.name = "/tmp/test.epub"
-            mocker.patch('backend.controllers.epub_controller.tempfile.NamedTemporaryFile', return_value=mock_ntf)
-            mocker.patch('backend.controllers.epub_controller.shutil.copyfileobj')
-            mocker.patch('builtins.open', mocker.mock_open())
-            mocker.patch('backend.controllers.epub_controller.r', MagicMock())
-            mocker.patch('backend.controllers.epub_controller.save_task', new=AsyncMock(side_effect=Exception("DB error")))
-
-            from backend.controllers.epub_controller import upload_epub
-            with pytest.raises(Exception, match="DB error"):
-                await upload_epub(current_user=mock_user, upload=mock_upload, session=session)
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_upload_epub_save_epub_error(self, mocker, mock_user, mock_upload, session):
-            """Test upload quand save_epub lève une exception."""
-            mocker.patch('backend.controllers.epub_controller.already_exists', new=AsyncMock(return_value=False))
-            mock_ntf = MagicMock()
-            mock_ntf.name = "/tmp/test.epub"
-            mocker.patch('backend.controllers.epub_controller.tempfile.NamedTemporaryFile', return_value=mock_ntf)
-            mocker.patch('backend.controllers.epub_controller.shutil.copyfileobj')
-            mocker.patch('builtins.open', mocker.mock_open())
-            mocker.patch('backend.controllers.epub_controller.r', MagicMock())
-
-            mock_task = MagicMock()
-            mock_task.id = 42
-            mocker.patch('backend.controllers.epub_controller.save_task', new=AsyncMock(return_value=mock_task))
-            mocker.patch('backend.controllers.epub_controller.save_epub', new=AsyncMock(side_effect=Exception("Epub DB error")))
-
-            from backend.controllers.epub_controller import upload_epub
-            with pytest.raises(Exception, match="Epub DB error"):
-                await upload_epub(current_user=mock_user, upload=mock_upload, session=session)
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_upload_epub_kiq_error(self, mocker, mock_user, mock_upload, session):
-            """Test upload quand process_epub_describe.kiq lève une exception."""
-            mocker.patch('backend.controllers.epub_controller.already_exists', new=AsyncMock(return_value=False))
-            mock_ntf = MagicMock()
-            mock_ntf.name = "/tmp/test.epub"
-            mocker.patch('backend.controllers.epub_controller.tempfile.NamedTemporaryFile', return_value=mock_ntf)
-            mocker.patch('backend.controllers.epub_controller.shutil.copyfileobj')
-            mocker.patch('builtins.open', mocker.mock_open())
-            mocker.patch('backend.controllers.epub_controller.r', MagicMock())
-
-            mock_task = MagicMock()
-            mock_task.id = 42
-            mock_epub = MagicMock()
-            mock_epub.id = 7
-            mocker.patch('backend.controllers.epub_controller.save_task', new=AsyncMock(return_value=mock_task))
-            mocker.patch('backend.controllers.epub_controller.save_epub', new=AsyncMock(return_value=mock_epub))
-            mocker.patch('backend.controllers.epub_controller.process_epub_describe.kiq', AsyncMock(side_effect=Exception("Worker error")))
-
-            from backend.controllers.epub_controller import upload_epub
-            with pytest.raises(Exception, match="Worker error"):
-                await upload_epub(current_user=mock_user, upload=mock_upload, session=session)
-
-    class TestDownloadEpub:
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_download_epub_success(self, mocker):
-            """Test download quand le fichier existe → FileResponse."""
-            mocker.patch('backend.controllers.epub_controller.os.path.exists', return_value=True)
-
-            from backend.controllers.epub_controller import download_epub
-            result = await download_epub(file_name="test.epub")
-
-            assert isinstance(result, FileResponse)
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_download_epub_not_found(self, mocker):
-            """Test download quand le fichier est absent → HTTPException 404."""
-            mocker.patch('backend.controllers.epub_controller.os.path.exists', return_value=False)
-
-            from backend.controllers.epub_controller import download_epub
-            with pytest.raises(HTTPException) as exc_info:
-                await download_epub(file_name="missing.epub")
-
-            assert exc_info.value.status_code == 404
-
 
 class TestEpubMiddleware:
-
     class TestAlreadyExists:
         @pytest.mark.unit
         @pytest.mark.asyncio
