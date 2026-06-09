@@ -1,57 +1,43 @@
 import asyncio
-import base64
-import io
-from transformers import AutoProcessor, AutoModelForCausalLM
-import requests, time
-from PIL import Image
-from deep_translator import GoogleTranslator
+from threading import Lock
+import torch
 from fastapi import FastAPI
-from utils.image_request import ImageRequest
+from transformers import AutoProcessor, AutoModelForCausalLM
+from utils import ImageRequest, ModelConfig, process_image
 
 app = FastAPI()
 
-processor = AutoProcessor.from_pretrained("microsoft/git-large")
-model = AutoModelForCausalLM.from_pretrained("microsoft/git-large")
+torch.set_grad_enabled(False)
+
+_model = None
+_processor = None
+_lock = Lock()
+
+config = ModelConfig(
+    use_pixel_values_only=True,
+    use_batch_decode=True,
+    generate_kwargs={"max_length": 50, "num_beams": 1, "do_sample": False},
+)
+
+
+def _get_model():
+    global _model, _processor
+    if _model is None:
+        with _lock:
+            if _model is None:
+                _processor = AutoProcessor.from_pretrained("microsoft/git-large", local_files_only=True)
+                _model = AutoModelForCausalLM.from_pretrained("microsoft/git-large", local_files_only=True).eval()
+    return _processor, _model
+
 
 @app.get("/")
 def root():
     return {"status": "git_large model running"}
 
+
 @app.post("/describe")
 async def predict(request: ImageRequest):
-    return await describe_image_with_git_large(request.images)
-
-async def process_image(image, processor, model):
-    try:
-        if image.startswith(('http://', 'https://')):
-            raw_image = Image.open(requests.get(image, stream=True).raw).convert('RGB')
-        else:
-            #raw_image = Image.open(image).convert('RGB')
-            image_bytes = base64.b64decode(image)
-            raw_image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-            
-        start = time.time()
-        pixel_values = processor(images=raw_image, return_tensors="pt").pixel_values
-        generated_ids = model.generate(pixel_values=pixel_values, max_length=50)
-        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        translation = GoogleTranslator(source='auto', target='fr').translate(generated_text)
-        end = time.time()
-        
-        return{
-            "success": True,
-            "english_description": generated_text,
-            "french_description": translation,
-            "generation_time": end - start
-        }
-        
-    except Exception as e:
-        return {
-            "error": f"Erreur lors de l'ouverture de l'image : {e}"
-        }
-        
-async def describe_image_with_git_large(image, output_file=None):
-    tasks = [
-        process_image(img, processor, model) for img in image
-    ]
-    imageList = await asyncio.gather(*tasks)            
-    return { "results": imageList }
+    processor, model = _get_model()
+    tasks = [process_image(image, processor, model, config) for image in request.images]
+    image_list = await asyncio.gather(*tasks)
+    return {"results": list(image_list)}
