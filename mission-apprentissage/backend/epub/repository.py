@@ -2,8 +2,8 @@ import os
 from datetime import datetime, timezone
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import update as sql_update
-from ..core.database.config import Task, Epub, Images, ImageDescription
+from sqlalchemy import update as sql_update, delete
+from ..core.database.config import Task, Epub, Images, DescriptionByIA
 
 
 async def create_task(session: AsyncSession, task_id_redis: str, user_id: int) -> Task:
@@ -14,7 +14,6 @@ async def create_task(session: AsyncSession, task_id_redis: str, user_id: int) -
         total_images=0,
         processed_images=0,
         created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         started_at=datetime.now(timezone.utc).replace(tzinfo=None),
         completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
@@ -77,14 +76,10 @@ async def create_image_descriptions_batch(
                 description_text = description_data.get("french_description")
                 if description_text:
                     session.add(
-                        ImageDescription(
+                        DescriptionByIA(
                             image_id=image.id,
                             model_ia_id=model_id,
                             description_text=description_text,
-                            is_written_by_ai=True,
-                            is_written_by_human=False,
-                            generated_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                            validated_by_human=False,
                             created_at=datetime.now(timezone.utc).replace(tzinfo=None),
                             updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
                         )
@@ -92,10 +87,72 @@ async def create_image_descriptions_batch(
     await session.commit()
 
 
+async def save_image_descriptions_slice(
+    session: AsyncSession,
+    images: List[Images],
+    model_id: int | None,
+    slice_map: dict,
+) -> int:
+    """Persiste les descriptions d'un slice (un batch pour un seul modèle).
+
+    Idempotent : pour chaque (image, modèle) on supprime l'éventuelle ligne
+    existante avant d'insérer, afin de ne pas créer de doublon lors d'un retry
+    de la tâche. Commit par slice. Retourne le nombre de lignes écrites.
+    """
+    written = 0
+    for global_idx, item in slice_map.items():
+        if global_idx >= len(images):
+            continue
+        if not (item and isinstance(item, dict)):
+            continue
+        description_text = item.get("french_description")
+        if not description_text:
+            continue
+        image_id = images[global_idx].id
+        await session.execute(
+            delete(DescriptionByIA).where(
+                DescriptionByIA.image_id == image_id,
+                DescriptionByIA.model_ia_id == model_id,
+            )
+        )
+        session.add(
+            DescriptionByIA(
+                image_id=image_id,
+                model_ia_id=model_id,
+                description_text=description_text,
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        written += 1
+    await session.commit()
+    return written
+
+
+async def set_task_total_images(session: AsyncSession, db_task_id: int, total: int) -> None:
+    await session.execute(
+        sql_update(Task)
+        .where(Task.id == db_task_id)
+        .values(total_images=total)
+    )
+    await session.commit()
+
+
+async def set_task_processed_images(
+    session: AsyncSession, db_task_id: int, processed: int
+) -> None:
+    await session.execute(
+        sql_update(Task)
+        .where(Task.id == db_task_id)
+        .values(processed_images=processed)
+    )
+    await session.commit()
+
+
 async def update_task_status(session: AsyncSession, db_task_id: int, status: str) -> None:
     await session.execute(
         sql_update(Task)
         .where(Task.id == db_task_id)
-        .values(status=status, updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
+        .values(status=status)
     )
     await session.commit()

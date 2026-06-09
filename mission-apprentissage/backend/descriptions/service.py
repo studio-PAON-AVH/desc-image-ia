@@ -3,18 +3,17 @@ import zipfile
 from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from ..core.database.config import Task, Images, ImageDescription
+from ..core.database.config import Task, Images, DescriptionFinale
 
 
 async def get_validated_description(session: AsyncSession, task_id_redis: str) -> dict[str, str]:
     result = await session.execute(
-        select(Task, Images, ImageDescription)
+        select(Task, Images, DescriptionFinale)
         .join(Images, Images.task_id == Task.id)
-        .join(ImageDescription, ImageDescription.image_id == Images.id)
+        .join(DescriptionFinale, DescriptionFinale.image_id == Images.id)
         .where(
             Task.task_id_redis == task_id_redis,
-            (ImageDescription.validated_by_human == True)
-            | (ImageDescription.is_written_by_human == True),
+            (DescriptionFinale.validated_by_human == True),
         )
     )
 

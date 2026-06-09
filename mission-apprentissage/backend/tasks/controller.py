@@ -51,10 +51,28 @@ async def get_task_result(
             status_code=500, detail="Une erreur est survenue lors du traitement de la tâche"
         )
 
-    if isinstance(result_json, dict) and result_json.get("status") == "en attente":
+    status_val = result_json.get("status") if isinstance(result_json, dict) else None
+
+    if status_val in ("en attente", "pending"):
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
-            content={"message": "Tâche en attente ou en cours"},
+            content={
+                "completed": False,
+                "status": "pending",
+                "total_images": result_json.get("total_images", 0),
+                "processed_images": result_json.get("processed_images", 0),
+                "message": "Tâche en attente ou en cours",
+            },
         )
 
-    return {"result": result_json}
+    if status_val == "in_progress":
+        return {
+            "completed": False,
+            "status": "in_progress",
+            "total_images": result_json.get("total_images", 0),
+            "processed_images": result_json.get("processed_images", 0),
+            "result": result_json.get("descriptions"),
+        }
+
+    # "completed" ou ancien format {"epub_path", "descriptions"} sans status
+    return {"completed": True, "status": "completed", "result": result_json}

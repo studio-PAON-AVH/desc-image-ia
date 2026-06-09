@@ -7,6 +7,7 @@ import os
 import tempfile
 import time
 import base64
+import weakref
 
 from typing import List
 from dotenv import load_dotenv
@@ -18,19 +19,72 @@ from .repository import (
     create_epub,
     create_images_batch,
     create_image_descriptions_batch,
+    save_image_descriptions_slice as _repo_save_image_descriptions_slice,
+    set_task_total_images as _repo_set_task_total_images,
+    set_task_processed_images as _repo_set_task_processed_images,
     update_task_status as _repo_update_task_status,
 )
+
+MODEL_KEYS = ("salesforce_blip", "florence2", "git_large")
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# Sémaphores partagés par modèle, un jeu par event loop. Le worker tourne en un
+# seul processus (un seul loop) : ces sémaphores plafonnent donc le nombre total
+# de requêtes en vol PAR MODÈLE à travers TOUTES les tâches EPUB simultanées.
+# Les modèles traitent en série -> au-delà de la limite, les requêtes
+# s'empileraient dans leur file et timeout (ReadTimeout). Une requête en attente
+# bloque sur le sémaphore avant de créer le client httpx, donc son chrono de
+# timeout ne démarre qu'à son tour réel.
+_model_semaphores: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
-async def get_image_describe(images: List[str]):
-    start = time.time()
+
+def _get_model_semaphores():
+    loop = asyncio.get_running_loop()
+    sems = _model_semaphores.get(loop)
+    if sems is None:
+        try:
+            limit = max(1, int(os.getenv("MAX_CONCURRENT_PER_MODEL", "1")))
+        except ValueError:
+            limit = 1
+        sems = {model_key: asyncio.Semaphore(limit) for model_key in MODEL_KEYS}
+        _model_semaphores[loop] = sems
+    return sems
+
+
+def _resolve_batch_size() -> int:
+    """Lit BATCH_SIZE/BATCH_MAX depuis l'environnement, valide et clamp.
+
+    Défaut à 1 : chaque image part dans son propre appel HTTP, donc chaque
+    description revient (et est persistée/exposée) dès que le modèle a fini
+    cette image précise, au lieu d'attendre tout un batch.
+    """
+    try:
+        batch_size = int(os.getenv("BATCH_SIZE", "1"))
+    except ValueError:
+        batch_size = 1
+    if batch_size < 1:
+        raise ValueError("BATCH_SIZE must be a positive integer")
+    try:
+        batch_max = int(os.getenv("BATCH_MAX", "200"))
+    except ValueError:
+        batch_max = 200
+    return min(batch_size, batch_max)
+
+
+async def stream_image_describe(images: List[str]):
+    """Envoie les images aux 3 modèles par batch et *yield* chaque résultat
+    (batch, modèle) dès qu'il revient, sans attendre les autres.
+
+    Chaque event yield a la forme :
+        {"batch_idx": int, "model_key": str, "batch_size": int,
+         "result": <dict normalisé>, "total_images": int}
+    """
 
     async def call(url, image_list: List[str]):
         timeout_image = 60
-        total_timeout = max(60, timeout_image * len(images))
+        total_timeout = max(60, timeout_image * len(image_list))
         async with httpx.AsyncClient(timeout=total_timeout) as client:
             try:
                 response = await client.post(url, json={"images": image_list})
@@ -50,76 +104,73 @@ async def get_image_describe(images: List[str]):
                 logger.error("Erreur inattendue vers %s: %s", url, str(e))
                 return {"success": False, "error": f"Unexpected error: {str(e)}"}
 
-    # Batch size configurable via env var, default 5
-    try:
-        batch_size = int(os.getenv("BATCH_SIZE", "5"))
-    except ValueError:
-        batch_size = 5
-    # Validate and clamp
-    if batch_size < 1:
-        raise ValueError("BATCH_SIZE must be a positive integer")
-    try:
-        batch_max = int(os.getenv("BATCH_MAX", "200"))
-    except ValueError:
-        batch_max = 200
-    batch_size = min(batch_size, batch_max)
+    batch_size = _resolve_batch_size()
+    total_images = len(images)
+    batches = [images[i : i + batch_size] for i in range(0, total_images, batch_size)]
 
-    batches = [images[i : i + batch_size] for i in range(0, len(images), batch_size)]
+    model_urls = {
+        "salesforce_blip": os.getenv("URL_SALESFORCE_CPU_LARGE"),
+        "florence2": os.getenv("URL_FLORANCE_2_LARGE"),
+        "git_large": os.getenv("URL_GIT_LARGE"),
+    }
 
-    tasks = []
-    for batch in batches:
-        tasks.append(call(os.getenv("URL_SALESFORCE_CPU_LARGE"), batch))
-        tasks.append(call(os.getenv("URL_FLORANCE_2_LARGE"), batch))
-        tasks.append(call(os.getenv("URL_GIT_LARGE"), batch))
+    sems = _get_model_semaphores()
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    async def wrapped(batch_idx, model_key, url, batch):
+        async with sems[model_key]:
+            result = await call(url, batch)
+        return {
+            "batch_idx": batch_idx,
+            "model_key": model_key,
+            "batch_size": batch_size,
+            "result": result,
+            "total_images": total_images,
+        }
 
-    end = time.time()
+    tasks = [
+        asyncio.ensure_future(wrapped(batch_idx, model_key, model_urls[model_key], batch))
+        for batch_idx, batch in enumerate(batches)
+        for model_key in MODEL_KEYS
+    ]
 
-    # Regroupe les résultats par modèle (liste de réponses par batch)
-    salesforce_results = []
-    florence_results = []
-    git_results = []
-    for i in range(0, len(results), 3):
+    for fut in asyncio.as_completed(tasks):
+        try:
+            yield await fut
+        except Exception as e:  # défensif : call() ne devrait pas lever
+            logger.exception("Tâche de description interrompue: %s", e)
 
-        def safe(r):
-            return r if not isinstance(r, Exception) else {"success": False, "error": str(r)}
 
-        salesforce_results.append(safe(results[i]))
-        florence_results.append(safe(results[i + 1]))
-        git_results.append(safe(results[i + 2]))
+async def get_image_describe(images: List[str]):
+    """Variante non-streaming : draine stream_image_describe et agrège par image.
 
-    # Réorganiser les résultats par image au lieu de par modèle
-    images_results = {}
-
+    Conservée pour describe_images_epub et la compatibilité ascendante.
+    """
+    start = time.time()
+    batch_size = _resolve_batch_size()
     total_images = len(images)
 
-    # initialize
-    for img_idx in range(total_images):
-        image_key = f"image_{img_idx}"
-        images_results[image_key] = {
+    images_results = {
+        f"image_{img_idx}": {
             "index": img_idx,
             "salesforce_blip": None,
             "florence2": None,
             "git_large": None,
         }
+        for img_idx in range(total_images)
+    }
 
-    for batch_idx in range(len(batches)):
-        aggregate_image(
-            batch_idx,
-            batch_size,
-            "salesforce_blip",
-            salesforce_results,
-            images_results,
-            total_images,
+    async for evt in stream_image_describe(images):
+        slice_map = slice_to_image_descriptions(
+            evt["batch_idx"],
+            evt["batch_size"],
+            evt["model_key"],
+            evt["result"],
+            evt["total_images"],
         )
-        aggregate_image(
-            batch_idx, batch_size, "florence2", florence_results, images_results, total_images
-        )
-        aggregate_image(
-            batch_idx, batch_size, "git_large", git_results, images_results, total_images
-        )
+        for global_idx, item in slice_map.items():
+            images_results[f"image_{global_idx}"][evt["model_key"]] = item
 
+    end = time.time()
     return {"images": images_results, "total_images": total_images, "time": end - start}
 
 
@@ -194,6 +245,23 @@ def aggregate_image(
             logger.debug("%s: no results for batch %s", model, index)
 
 
+def slice_to_image_descriptions(batch_idx, batch_size, model_key, result, total_images):
+    """Transforme la réponse d'un (batch, modèle) en {global_image_idx: item}.
+
+    Parallèle à aggregate_image, mais pour un seul slice.
+    """
+    offset = batch_idx * batch_size
+    out = {}
+    if result and result.get("results"):
+        for j, item in enumerate(result["results"]):
+            global_idx = offset + j
+            if global_idx < total_images:
+                out[global_idx] = item
+            else:
+                logger.debug("%s: ignored result for global index =%s", model_key, global_idx)
+    return out
+
+
 async def save_epub(session: AsyncSession, task_id: int, file_name: str):
     return await create_epub(session, task_id, file_name)
 
@@ -214,3 +282,17 @@ async def save_image_descriptions(
 
 async def update_task_status(session: AsyncSession, db_task_id: int, status: str):
     return await _repo_update_task_status(session, db_task_id, status)
+
+
+async def save_descriptions_slice(
+    session: AsyncSession, images: List[Images], model_id, slice_map: dict
+):
+    return await _repo_save_image_descriptions_slice(session, images, model_id, slice_map)
+
+
+async def set_total_images(session: AsyncSession, db_task_id: int, total: int):
+    return await _repo_set_task_total_images(session, db_task_id, total)
+
+
+async def set_processed_images(session: AsyncSession, db_task_id: int, processed: int):
+    return await _repo_set_task_processed_images(session, db_task_id, processed)

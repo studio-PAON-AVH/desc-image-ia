@@ -4,6 +4,7 @@ import shutil
 import os
 import base64
 
+from collections import defaultdict
 from sqlalchemy import select
 from taskiq import TaskiqEvents
 
@@ -12,9 +13,12 @@ logger = logging.getLogger(__name__)
 from ..broker import broker
 from ..epub.service import (
     save_images,
-    save_image_descriptions,
     extract_images_epub,
-    get_image_describe,
+    stream_image_describe,
+    slice_to_image_descriptions,
+    save_descriptions_slice,
+    set_total_images,
+    set_processed_images,
     update_task_status,
 )
 from ..core.database.config import async_session, Task, Epub, ModelsIA
@@ -71,7 +75,8 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                     img_bs64 = base64.b64encode(f.read()).decode("utf-8")
                     img_list.append(img_bs64)
 
-            description = await get_image_describe(img_list)
+            total_images = len(img_list)
+            await set_total_images(session, db_task_id, total_images)
 
             result_models = await session.execute(
                 select(ModelsIA).where(
@@ -84,13 +89,87 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                 "florence2": models.get(MODEL_FLORENCE),
                 "git_large": models.get(MODEL_GIT),
             }
-            await save_image_descriptions(session, images, description, model_mapping)
-            await update_task_status(session, db_task_id, "completed")
 
+            # Structure partielle, miroir de la sortie de get_image_describe
+            partial = {
+                f"image_{i}": {
+                    "index": i,
+                    "salesforce_blip": None,
+                    "florence2": None,
+                    "git_large": None,
+                }
+                for i in range(total_images)
+            }
+            done_counts = defaultdict(int)
+            seen = set()
+            processed_images = 0
+
+            async for evt in stream_image_describe(img_list):
+                model_key = evt["model_key"]
+                slice_map = slice_to_image_descriptions(
+                    evt["batch_idx"],
+                    evt["batch_size"],
+                    model_key,
+                    evt["result"],
+                    evt["total_images"],
+                )
+
+                # Persiste ce slice (commit par (batch, modèle))
+                await save_descriptions_slice(
+                    session, images, model_mapping.get(model_key), slice_map
+                )
+
+                # Met à jour la structure partielle + la progression par image.
+                # On compte chaque (modèle, image) à la première vue — même si le
+                # slice est vide (modèle en échec) — pour qu'un modèle mort ne
+                # bloque pas le compteur processed_images.
+                offset = evt["batch_idx"] * evt["batch_size"]
+                batch_indices = range(
+                    offset, min(offset + evt["batch_size"], total_images)
+                )
+                for global_idx in batch_indices:
+                    if global_idx in slice_map:
+                        partial[f"image_{global_idx}"][model_key] = slice_map[global_idx]
+                    key = (model_key, global_idx)
+                    if key not in seen:
+                        seen.add(key)
+                        done_counts[global_idx] += 1
+                        if done_counts[global_idx] == len(model_mapping):
+                            processed_images += 1
+
+                await set_processed_images(session, db_task_id, processed_images)
+                r.set(
+                    task_id,
+                    json.dumps(
+                        {
+                            "status": "in_progress",
+                            "epub_path": epub_path,
+                            "total_images": total_images,
+                            "processed_images": processed_images,
+                            "descriptions": {
+                                "images": partial,
+                                "total_images": total_images,
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+
+            await update_task_status(session, db_task_id, "completed")
             r.set(
                 task_id,
                 json.dumps(
-                    {"epub_path": epub_path, "descriptions": description}, ensure_ascii=False
+                    {
+                        "status": "completed",
+                        "epub_path": epub_path,
+                        "total_images": total_images,
+                        "processed_images": processed_images,
+                        "descriptions": {
+                            "images": partial,
+                            "total_images": total_images,
+                        },
+                    },
+                    ensure_ascii=False,
                 ),
             )
 
