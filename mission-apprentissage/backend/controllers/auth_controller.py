@@ -48,7 +48,7 @@ async def create_new_user(db: Annotated[AsyncSession, Depends(get_session)], use
         "token_type": "bearer"}
 
 async def create_admin_user(db: Annotated[AsyncSession, Depends(get_session)], current_user: Annotated[User, Depends(get_current_user)], user_data: UserCreate) -> dict:
-    is_admin(current_user)
+    await is_admin(current_user)
     # Vérification si l'email existe déjà
     existing_user = await db.execute(select(User).filter(User.email == user_data.email))
     if existing_user.scalars().first():

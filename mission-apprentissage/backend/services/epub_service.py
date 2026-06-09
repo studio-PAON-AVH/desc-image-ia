@@ -46,14 +46,14 @@ async def get_image_describe(images: List[str]):
     # Batch size configurable via env var, default 5
     try:
         batch_size = int(os.getenv('BATCH_SIZE', '5'))
-    except Exception:
+    except ValueError:
         batch_size = 5
     # Validate and clamp
     if batch_size < 1:
-        batch_size = 5
+        raise ValueError("BATCH_SIZE must be a positive integer")
     try:
         batch_max = int(os.getenv('BATCH_MAX', '200'))
-    except Exception:
+    except ValueError:
         batch_max = 200
     batch_size = min(batch_size, batch_max)
 
