@@ -144,6 +144,7 @@ TIME_ZONE = 'Europe/Paris'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 FASTAPI_URL = os.environ.get('FASTAPI_URL', 'http://localhost:8000')
+INTERNAL_FASTAPI_URL = os.environ.get('INTERNAL_FASTAPI_URL', FASTAPI_URL)
 
 # Logging configuration
 LOGGING = {

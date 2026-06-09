@@ -97,6 +97,9 @@ services:
     build:
       context: ..
       dockerfile: mission-apprentissage/django_app/Dockerfile
+    environment:
+      - FASTAPI_URL: http://localhost:8000
+      - INTERNAL_FASTAPI_URL: http://fastapi:8000
     ports:
       - "7001:7001"
     depends_on:

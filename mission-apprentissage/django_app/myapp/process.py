@@ -20,7 +20,7 @@ def process_describe_image(request):
 
     try:
         response = requests.post(
-            f"{settings.FASTAPI_URL}/api/epub/upload-epub/",
+            f"{settings.INTERNAL_FASTAPI_URL}/api/epub/upload-epub/",
             files={'upload': (epub_file.name, epub_file.read(), epub_file.content_type)},
             headers={'Authorization': auth_header},
             timeout=120,
