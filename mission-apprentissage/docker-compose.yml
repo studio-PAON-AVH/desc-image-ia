@@ -1,45 +1,141 @@
 services:
 
-  gitlab-runner:
-    image: gitlab/gitlab-runner:latest
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./gitlab-runner/config:/etc/gitlab-runner
-    environment:
-      - REGISTRATION=${GITLAB_RUNNER_TOKEN}
-
   postgresql:
-    image: postgres:16
+    build:
+      context: ./backend/core/database
+    container_name: postgresserver
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./backend/core/database/conf.d:/opt/postgresql.conf.d
+      - ./backend/core/database/ssl:/opt/ssl-in
+      - postgres_data:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
+
   redis:
     build:
-      context: ..
-      dockerfile: mission-apprentissage/backend/redis/Dockerfile
+      context: ./backend/redis
     ports:
       - "6379:6379"
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   saleforce_cpu_large:
     build:
       context: ..
       dockerfile: mission-apprentissage/backend/models/model1/Dockerfile
+    image: mission-apprentissage/saleforce_cpu_large:latest
     ports:
       - "8001:8000"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /dev/shm
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
+      HF_HUB_OFFLINE: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 8g
+        reservations:
+          memory: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
   florence2_large:
     build:
       context: ..
       dockerfile: mission-apprentissage/backend/models/model2/Dockerfile
+    image: mission-apprentissage/florence2_large:latest
     ports:
       - "8002:8000"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /dev/shm
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TORCH_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
+      HF_HUB_OFFLINE: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 8g
+        reservations:
+          memory: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
   git_large:
     build:
       context: ..
       dockerfile: mission-apprentissage/backend/models/model3/Dockerfile
+    image: mission-apprentissage/git_large:latest
     ports:
       - "8003:8000"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /dev/shm
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TORCH_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
+      HF_HUB_OFFLINE: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 8g
+        reservations:
+          memory: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
   fastapi:
     build:
       context: ..
@@ -47,6 +143,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      APP_ENV: .env.dev
       REDIS_URL: redis://redis:6379/1
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -54,7 +151,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      UPLOAD_TEMP_DIR: /tmp/epub_shared
+      UPLOAD_TEMP_DIR: /shared
       SECRET_KEY: ${SECRET_KEY}
       ALGORITHM: ${ALGORITHM}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
@@ -65,15 +162,27 @@ services:
       BATCH_SIZE: ${BATCH_SIZE}
       BATCH_MAX: ${BATCH_MAX}
     volumes:
-      - epub_shared:/tmp/epub_shared
+      - epub_shared:/shared
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     depends_on:
-      - redis
-      - postgresql
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   worker-taskiq:
     build:
       context: ..
       dockerfile: mission-apprentissage/backend/worker/Dockerfile
+    restart: unless-stopped
     environment:
+      APP_ENV: .env.dev
       REDIS_URL: redis://redis:6379/1
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -81,29 +190,53 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      UPLOAD_TEMP_DIR: /tmp/epub_shared
+      UPLOAD_TEMP_DIR: /shared
       URL_SALESFORCE_CPU_LARGE: http://saleforce_cpu_large:8000/describe
       URL_FLORANCE_2_LARGE: http://florence2_large:8000/describe
       URL_GIT_LARGE: http://git_large:8000/describe
       BATCH_SIZE: ${BATCH_SIZE}
       BATCH_MAX: ${BATCH_MAX}
     volumes:
-      - epub_shared:/tmp/epub_shared
+      - epub_shared:/shared
     depends_on:
-      - redis
-      - postgresql
-  
-  frontend-django:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      saleforce_cpu_large:
+        condition: service_healthy
+      florence2_large:
+        condition: service_healthy
+      git_large:
+        condition: service_healthy
+
+  frontend-react:
     build:
-      context: ..
-      dockerfile: mission-apprentissage/django_app/Dockerfile
-    environment:
-      - FASTAPI_URL: http://localhost:8000
-      - INTERNAL_FASTAPI_URL: http://fastapi:8000
+      context: ./frontend
+      target: runner
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    container_name: frontend-react
     ports:
-      - "7001:7001"
+      - "3000:8080"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
-      - fastapi
+      fastapi:
+        condition: service_healthy
 
 volumes:
   epub_shared:
+  postgres_data:
+  redis_data:
