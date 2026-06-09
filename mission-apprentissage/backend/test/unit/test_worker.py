@@ -2,20 +2,6 @@ import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-
-@pytest.fixture
-def session(mocker):
-    mock = mocker.MagicMock()
-    mock.add = mocker.MagicMock(return_value=None)
-    mock.commit = mocker.AsyncMock(return_value=None)
-    mock.refresh = mocker.AsyncMock(return_value=None)
-    mock.execute = mocker.AsyncMock(return_value=None)
-    return mock
-
 
 def make_async_session_cm(session_mock):
     """Crée un context manager async simulant async_session()."""
@@ -23,6 +9,29 @@ def make_async_session_cm(session_mock):
     cm.__aenter__.return_value = session_mock
     cm.__aexit__.return_value = None
     return cm
+
+
+def make_stream(events):
+    """Construit un faux stream_image_describe yieldant les events donnés."""
+
+    async def fake_stream(img_list):
+        for evt in events:
+            yield evt
+
+    return fake_stream
+
+
+def describe_event(batch_idx, model_key, batch_size, total_images, french_descriptions):
+    """Fabrique un event tel que yieldé par stream_image_describe."""
+    return {
+        "batch_idx": batch_idx,
+        "model_key": model_key,
+        "batch_size": batch_size,
+        "total_images": total_images,
+        "result": {
+            "results": [{"french_description": fr} for fr in french_descriptions]
+        },
+    }
 
 
 class TestRecoverStuckTasks:
@@ -235,7 +244,7 @@ class TestProcessEpubDescribe:
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_full_pipeline_success(self, mocker):
-            """Test le pipeline complet de traitement d'un EPUB avec succès."""
+            """Test le pipeline complet : streaming, sauvegarde par slice, progression."""
             epub_path = "/path/to/book.epub"
             task_id = "redis-key-abc"
             db_task_id = 42
@@ -244,20 +253,22 @@ class TestProcessEpubDescribe:
             image_paths = ["/tmp/img1.png", "/tmp/img2.png"]
             temp_folder = "/tmp/epub_extract"
             fake_images = [MagicMock(), MagicMock()]
-            fake_descriptions = {
-                "images": {"image_0": {}, "image_1": {}},
-                "total_images": 2,
-                "time": 1.0,
-            }
+
+            # Un event par (batch, modèle) pour un batch de 2 images, 3 modèles.
+            events = [
+                describe_event(0, "salesforce_blip", 2, 2, ["a0", "a1"]),
+                describe_event(0, "florence2", 2, 2, ["b0", "b1"]),
+                describe_event(0, "git_large", 2, 2, ["c0", "c1"]),
+            ]
 
             mock_session = AsyncMock()
-            mock_model_blip = MagicMock()
+            mock_model_blip = MagicMock(name="blip")
             mock_model_blip.name = "Salesforce BLIP"
             mock_model_blip.id = 1
-            mock_model_florence = MagicMock()
+            mock_model_florence = MagicMock(name="florence")
             mock_model_florence.name = "Florence-2"
             mock_model_florence.id = 2
-            mock_model_git = MagicMock()
+            mock_model_git = MagicMock(name="git")
             mock_model_git.name = "GIT Large"
             mock_model_git.id = 3
             mock_models_result = MagicMock()
@@ -281,13 +292,17 @@ class TestProcessEpubDescribe:
                 new_callable=AsyncMock,
                 return_value=fake_images,
             )
-            mock_get_describe = mocker.patch(
-                "backend.worker.worker.get_image_describe",
-                new_callable=AsyncMock,
-                return_value=fake_descriptions,
+            mocker.patch(
+                "backend.worker.worker.stream_image_describe", side_effect=make_stream(events)
             )
-            mock_save_descriptions = mocker.patch(
-                "backend.worker.worker.save_image_descriptions", new_callable=AsyncMock
+            mock_set_total = mocker.patch(
+                "backend.worker.worker.set_total_images", new_callable=AsyncMock
+            )
+            mock_set_processed = mocker.patch(
+                "backend.worker.worker.set_processed_images", new_callable=AsyncMock
+            )
+            mock_save_slice = mocker.patch(
+                "backend.worker.worker.save_descriptions_slice", new_callable=AsyncMock
             )
             mock_update = mocker.patch(
                 "backend.worker.worker.update_task_status", new_callable=AsyncMock
@@ -301,13 +316,26 @@ class TestProcessEpubDescribe:
 
             mock_update.assert_any_call(mock_session, db_task_id, "in_progress")
             mock_save_images.assert_called_once_with(mock_session, db_task_id, epub_id, image_paths)
-            mock_get_describe.assert_called_once()
-            mock_save_descriptions.assert_called_once()
+            mock_set_total.assert_called_once_with(mock_session, db_task_id, 2)
+            # Une sauvegarde par slice yieldé
+            assert mock_save_slice.call_count == len(events)
             mock_update.assert_any_call(mock_session, db_task_id, "completed")
-            mock_redis.set.assert_called_once()
-            redis_payload = json.loads(mock_redis.set.call_args[0][1])
-            assert redis_payload["epub_path"] == epub_path
-            assert "descriptions" in redis_payload
+
+            # Plusieurs écritures Redis "in_progress" puis une finale "completed"
+            statuses = [
+                json.loads(c.args[1]).get("status") for c in mock_redis.set.call_args_list
+            ]
+            assert "in_progress" in statuses
+            assert statuses[-1] == "completed"
+
+            final_payload = json.loads(mock_redis.set.call_args_list[-1].args[1])
+            assert final_payload["epub_path"] == epub_path
+            assert final_payload["total_images"] == 2
+            assert final_payload["processed_images"] == 2
+            assert "descriptions" in final_payload
+
+            # processed_images atteint 2 (toutes les images, tous les modèles vus)
+            assert mock_set_processed.call_args_list[-1].args[2] == 2
             mock_rmtree.assert_called_once_with(temp_folder)
 
         @pytest.mark.unit
@@ -323,7 +351,6 @@ class TestProcessEpubDescribe:
 
             image_paths = ["/tmp/img1.png"]
             fake_images = [MagicMock()]
-            fake_descriptions = {"images": {}, "total_images": 1, "time": 0.5}
             fake_img_bytes = b"image_bytes"
 
             mock_session = AsyncMock()
@@ -344,12 +371,12 @@ class TestProcessEpubDescribe:
                 new_callable=AsyncMock,
                 return_value=fake_images,
             )
-            mock_get_describe = mocker.patch(
-                "backend.worker.worker.get_image_describe",
-                new_callable=AsyncMock,
-                return_value=fake_descriptions,
+            mock_stream = mocker.patch(
+                "backend.worker.worker.stream_image_describe", side_effect=make_stream([])
             )
-            mocker.patch("backend.worker.worker.save_image_descriptions", new_callable=AsyncMock)
+            mocker.patch("backend.worker.worker.set_total_images", new_callable=AsyncMock)
+            mocker.patch("backend.worker.worker.set_processed_images", new_callable=AsyncMock)
+            mocker.patch("backend.worker.worker.save_descriptions_slice", new_callable=AsyncMock)
             mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
             mocker.patch("builtins.open", mocker.mock_open(read_data=fake_img_bytes))
 
@@ -357,7 +384,7 @@ class TestProcessEpubDescribe:
 
             await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
-            img_list_arg = mock_get_describe.call_args[0][0]
+            img_list_arg = mock_stream.call_args[0][0]
             assert len(img_list_arg) == 1
             assert img_list_arg[0] == base64.b64encode(fake_img_bytes).decode("utf-8")
 
@@ -372,7 +399,6 @@ class TestProcessEpubDescribe:
 
             image_paths = ["/tmp/img1.png"]
             fake_images = [MagicMock()]
-            fake_descriptions = {"images": {}, "total_images": 1, "time": 0.5}
 
             mock_session = AsyncMock()
             mock_models_result = MagicMock()
@@ -393,11 +419,11 @@ class TestProcessEpubDescribe:
                 return_value=fake_images,
             )
             mocker.patch(
-                "backend.worker.worker.get_image_describe",
-                new_callable=AsyncMock,
-                return_value=fake_descriptions,
+                "backend.worker.worker.stream_image_describe", side_effect=make_stream([])
             )
-            mocker.patch("backend.worker.worker.save_image_descriptions", new_callable=AsyncMock)
+            mocker.patch("backend.worker.worker.set_total_images", new_callable=AsyncMock)
+            mocker.patch("backend.worker.worker.set_processed_images", new_callable=AsyncMock)
+            mocker.patch("backend.worker.worker.save_descriptions_slice", new_callable=AsyncMock)
             mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
             mock_rmtree = mocker.patch("backend.worker.worker.shutil.rmtree")
             mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake"))

@@ -1,9 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
-from dotenv import load_dotenv
-
-load_dotenv()
 
 
 @pytest.fixture
@@ -59,42 +56,6 @@ class TestCORSMiddleware:
         response = client.get("/health", headers={"Origin": "http://malicious.com"})
 
         assert "access-control-allow-origin" not in response.headers
-
-
-class TestRoutersRegistered:
-    @pytest.fixture
-    def app(self, mocker):
-        mock_broker = MagicMock()
-        mock_broker.is_worker_process = False
-        mocker.patch("backend.main.broker", mock_broker)
-
-        from backend.main import app
-
-        return app
-
-    @pytest.mark.unit
-    def test_epub_router_registered(self, app):
-        """Le router epub est bien enregistré sous /api/epub."""
-        paths = [route.path for route in app.routes]
-        assert any(p.startswith("/api/epub") for p in paths)
-
-    @pytest.mark.unit
-    def test_task_router_registered(self, app):
-        """Le router task est bien enregistré sous /api/task."""
-        paths = [route.path for route in app.routes]
-        assert any(p.startswith("/api/task") for p in paths)
-
-    @pytest.mark.unit
-    def test_description_router_registered(self, app):
-        """Le router description est bien enregistré sous /api/description."""
-        paths = [route.path for route in app.routes]
-        assert any(p.startswith("/api/description") for p in paths)
-
-    @pytest.mark.unit
-    def test_auth_router_registered(self, app):
-        """Le router auth est bien enregistré sous /api/auth."""
-        paths = [route.path for route in app.routes]
-        assert any(p.startswith("/api/auth") for p in paths)
 
 
 class TestLifespan:

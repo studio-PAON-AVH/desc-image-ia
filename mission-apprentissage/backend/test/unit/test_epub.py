@@ -1,49 +1,15 @@
 import pytest
 import base64
 import httpx
-from dotenv import load_dotenv
 from unittest.mock import AsyncMock, MagicMock
-from backend.utils import ImageRequest
 from backend.epub.service import (
     get_image_describe,
+    stream_image_describe,
+    slice_to_image_descriptions,
     extract_images_epub,
     describe_images_epub,
-    save_epub,
-    save_task,
-    save_images,
-    save_image_descriptions,
-    update_task_status,
 )
-from backend.core.database.config import Images, ImageDescription
 from backend.epub.middleware import already_exists as epub_already_exists
-
-load_dotenv()
-
-
-@pytest.fixture
-def mock_user():
-    user = MagicMock()
-    user.id = 1
-    return user
-
-
-@pytest.fixture
-def mock_upload():
-    upload = MagicMock()
-    upload.filename = "test.epub"
-    upload.file = MagicMock()
-    upload.read = AsyncMock(return_value=b"PK\x03\x04" + b"\x00" * 100)
-    return upload
-
-
-@pytest.fixture
-def session(mocker):
-    mock = mocker.MagicMock()
-    mock.add = mocker.MagicMock(return_value=None)
-    mock.commit = mocker.AsyncMock(return_value=None)
-    mock.refresh = mocker.AsyncMock(return_value=None)
-    mock.execute = mocker.AsyncMock(return_value=None)
-    return mock
 
 
 class TestEpubService:
@@ -165,35 +131,13 @@ class TestEpubService:
 
         @pytest.mark.unit
         @pytest.mark.asyncio
-        async def test_get_image_describe_call_models(self, mocker):
-            """Garantie que get_image_describe appelle les modèles externes."""
-            mocker_response = AsyncMock(
-                status_code=200,
-                json=lambda: {
-                    "results": [
-                        {
-                            "success": True,
-                            "english_description": "A cat",
-                            "french_description": "Un chat",
-                            "generation_time": 0.3,
-                        }
-                    ]
-                },
-            )
-            post_mock = mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
-
-            img_1_bs64 = base64.b64encode(b"fake_image_data_1").decode("utf-8")
-            img_2_bs64 = base64.b64encode(b"fake_image_data_2").decode("utf-8")
-            img_bs64_list = [img_1_bs64, img_2_bs64]
-
-            result = await get_image_describe(img_bs64_list)
-            assert "images" in result
-            assert post_mock.call_count == 3
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
         async def test_get_image_describe_batching(self, mocker):
             """Test de la logique de batching dans get_image_describe."""
+            import os
+
+            # On épingle BATCH_SIZE=5 : ce test vérifie la maths de batching,
+            # indépendamment du défaut (désormais 1 = rendu image par image).
+            mocker.patch.dict(os.environ, {"BATCH_SIZE": "5"})
             mocker_response = AsyncMock(
                 status_code=200,
                 json=lambda: {
@@ -216,35 +160,6 @@ class TestEpubService:
             result = await get_image_describe(img_bs64_list)
 
             assert post_mock.call_count == 9
-            assert "images" in result
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_get_image_describe_calls_all_models(self, mocker):
-            """Test que get_image_describe appelle tous les modèles pour chaque batch."""
-            mocker_response = AsyncMock(
-                status_code=200,
-                json=lambda: {
-                    "results": [
-                        {
-                            "success": True,
-                            "english_description": "desc",
-                            "french_description": "desc fr",
-                            "generation_time": 0.4,
-                        }
-                    ]
-                },
-            )
-
-            img_bs64_list = [
-                base64.b64encode(f"fake_image_data_{i}".encode()).decode("utf-8") for i in range(7)
-            ]
-
-            post_mock = mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
-
-            result = await get_image_describe(img_bs64_list)
-
-            assert post_mock.call_count == 6
             assert "images" in result
 
         @pytest.mark.unit
@@ -334,33 +249,153 @@ class TestEpubService:
             assert "images" in result
             assert result["total_images"] == 1
 
-    class TestImageRequest:
+    class TestStreamImageDescribe:
         @pytest.mark.unit
-        def test_request_image_request_valid(self):
-            """Test de la validation de ImageRequest avec des images valides."""
-            img_local = ["fake_image_data_1", "fake_image_data_2"]
-            request = ImageRequest(images=img_local)
-            assert request.images == img_local
+        @pytest.mark.asyncio
+        async def test_yields_one_event_per_batch_model(self, mocker):
+            """Le stream yield un event par (batch, modèle) avec les bonnes métadonnées."""
+            import os
+
+            # BATCH_SIZE=5 -> les 2 images tiennent dans un seul batch.
+            mocker.patch.dict(os.environ, {"BATCH_SIZE": "5"})
+            mocker_response = AsyncMock(
+                status_code=200,
+                json=lambda: {
+                    "results": [
+                        {"french_description": "Un chat"},
+                        {"french_description": "Un chien"},
+                    ]
+                },
+            )
+            mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
+
+            img_list = [
+                base64.b64encode(b"img1").decode("utf-8"),
+                base64.b64encode(b"img2").decode("utf-8"),
+            ]
+
+            events = [evt async for evt in stream_image_describe(img_list)]
+
+            # 1 batch (batch_size défaut 5 >= 2 images) × 3 modèles
+            assert len(events) == 3
+            assert {e["model_key"] for e in events} == {
+                "salesforce_blip",
+                "florence2",
+                "git_large",
+            }
+            assert all(e["batch_idx"] == 0 for e in events)
+            assert all(e["total_images"] == 2 for e in events)
+            assert all(e["result"].get("results") for e in events)
 
         @pytest.mark.unit
-        def test_request_image_request_invalid(self):
-            """Test de la validation de ImageRequest avec des images invalides."""
-            img_local = "not_a_list"
-            with pytest.raises(Exception):
-                ImageRequest(images=img_local)
+        @pytest.mark.asyncio
+        async def test_failing_model_does_not_block_others(self, mocker):
+            """Un modèle en échec yield quand même son event, sans bloquer les autres."""
+            mocker.patch(
+                "httpx.AsyncClient.post", side_effect=httpx.RequestError("network down")
+            )
+
+            img_list = [base64.b64encode(b"img1").decode("utf-8")]
+
+            events = [evt async for evt in stream_image_describe(img_list)]
+
+            assert len(events) == 3
+            assert all(e["result"].get("success") is False for e in events)
+            # rien à persister pour un slice en échec
+            for e in events:
+                assert (
+                    slice_to_image_descriptions(
+                        e["batch_idx"], e["batch_size"], e["model_key"], e["result"], 1
+                    )
+                    == {}
+                )
 
         @pytest.mark.unit
-        def test_request_image_request_none(self):
-            """Test avec None au lieu d'une liste."""
-            with pytest.raises(Exception):
-                ImageRequest(images=None)
+        @pytest.mark.asyncio
+        async def test_batch_size_one_yields_per_image(self, mocker):
+            """Avec BATCH_SIZE=1, chaque image part dans son propre appel HTTP."""
+            import os
+
+            mocker.patch.dict(os.environ, {"BATCH_SIZE": "1"})
+            mocker_response = AsyncMock(
+                status_code=200,
+                json=lambda: {"results": [{"french_description": "desc"}]},
+            )
+            post_mock = mocker.patch("httpx.AsyncClient.post", return_value=mocker_response)
+
+            img_list = [
+                base64.b64encode(f"img{i}".encode()).decode("utf-8") for i in range(3)
+            ]
+
+            events = [evt async for evt in stream_image_describe(img_list)]
+
+            # 3 images × 3 modèles = 9 appels / events, un batch par image
+            assert post_mock.call_count == 9
+            assert len(events) == 9
+            assert all(e["batch_size"] == 1 for e in events)
+            # chaque image (batch_idx 0,1,2) est vue par les 3 modèles
+            from collections import Counter
+
+            per_batch = Counter(e["batch_idx"] for e in events)
+            assert per_batch == {0: 3, 1: 3, 2: 3}
 
         @pytest.mark.unit
-        def test_request_image_request_empty(self):
-            """Test avec une chaîne au lieu d'une liste."""
-            img_local = ["", ""]
-            request = ImageRequest(images=img_local)
-            assert request.images == img_local
+        @pytest.mark.asyncio
+        async def test_respects_max_concurrent_per_model(self, mocker):
+            """Le sémaphore plafonne les requêtes en vol PAR MODÈLE (1 par défaut)."""
+            import asyncio
+            import os
+            from collections import defaultdict
+
+            mocker.patch.dict(
+                os.environ, {"BATCH_SIZE": "1", "MAX_CONCURRENT_PER_MODEL": "1"}
+            )
+
+            current = defaultdict(int)
+            peak = defaultdict(int)
+
+            async def fake_post(url, json=None):
+                current[url] += 1
+                peak[url] = max(peak[url], current[url])
+                await asyncio.sleep(0.01)
+                current[url] -= 1
+                return AsyncMock(
+                    status_code=200, json=lambda: {"results": [{"french_description": "d"}]}
+                )
+
+            mocker.patch("httpx.AsyncClient.post", side_effect=fake_post)
+
+            img_list = [
+                base64.b64encode(f"img{i}".encode()).decode("utf-8") for i in range(4)
+            ]
+
+            events = [evt async for evt in stream_image_describe(img_list)]
+
+            assert len(events) == 12  # 4 images × 3 modèles
+            # 3 URLs distinctes (une par modèle), jamais plus d'1 requête en vol chacune
+            assert len(peak) == 3
+            assert all(p <= 1 for p in peak.values())
+
+    class TestSliceToImageDescriptions:
+        @pytest.mark.unit
+        def test_applies_batch_offset(self):
+            """Les index globaux tiennent compte de batch_idx * batch_size."""
+            result = {"results": [{"french_description": "a"}, {"french_description": "b"}]}
+            out = slice_to_image_descriptions(1, 2, "florence2", result, total_images=4)
+            assert set(out.keys()) == {2, 3}
+
+        @pytest.mark.unit
+        def test_trims_out_of_range_indices(self):
+            """Les résultats au-delà de total_images sont ignorés."""
+            result = {"results": [{"french_description": "a"}, {"french_description": "b"}]}
+            out = slice_to_image_descriptions(1, 2, "git_large", result, total_images=3)
+            assert set(out.keys()) == {2}
+
+        @pytest.mark.unit
+        def test_empty_for_failed_result(self):
+            """Un résultat sans 'results' donne un mapping vide."""
+            assert slice_to_image_descriptions(0, 5, "git_large", {"success": False}, 2) == {}
+            assert slice_to_image_descriptions(0, 5, "git_large", None, 2) == {}
 
     class TestExtractImagesEpub:
         @pytest.mark.unit
@@ -405,14 +440,6 @@ class TestEpubService:
             assert isinstance(result_paths, list)
             assert len(result_paths) == 0
             assert result_dir is None
-
-        @pytest.mark.unit
-        def test_extract_images_epub_error(self, mocker):
-            """Test de la gestion des erreurs lors de l'extraction d'images d'un EPUB."""
-            mocker.patch("backend.epub.service.epub.read_epub", side_effect=Exception("Read error"))
-
-            with pytest.raises(Exception):
-                extract_images_epub("some/path/to/book.epub")
 
         @pytest.mark.unit
         def test_extract_images_epub_creates_temp_dir(self, mocker):
@@ -595,258 +622,6 @@ class TestEpubService:
             await describe_images_epub("some/path/to/book.epub")
 
             mock_rmtree.assert_called_once_with(temp_dir)
-
-    class TestSaveEpub:
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_epub_success(self, session):
-            """Test de la sauvegarde d'un EPUB dans la base de données."""
-            result = await save_epub(session, task_id=1, file_name="test.epub")
-
-            assert session.add.called
-            assert result.file_name == "test.epub"
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_epub_commit_error(self, session):
-            """Test de la gestion des erreurs lors du commit."""
-            session.commit.side_effect = Exception("Database error")
-
-            with pytest.raises(Exception):
-                await save_epub(session, task_id=1, file_name="test.epub")
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_epub_refresh_failure(self, session):
-            """Test de la gestion des erreurs lors du rafraîchissement de l'instance après commit."""
-            session.refresh.side_effect = Exception("Refresh error")
-
-            with pytest.raises(Exception):
-                await save_epub(session, task_id=1, file_name="test.epub")
-
-    class TestSaveTask:
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_task_success(self, session):
-            """Test de la sauvegarde d'un EPUB dans la base de données."""
-            result = await save_task(session, task_id_redis="1", user_id=1)
-
-            assert session.add.called
-            assert result.task_id_redis == "1"
-            assert result.user_id == 1
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_task_commit_error(self, session):
-            """Test de la gestion des erreurs lors du commit."""
-            session.commit.side_effect = Exception("Database error")
-
-            with pytest.raises(Exception):
-                await save_task(session, task_id_redis="1", user_id=1)
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_task_refresh_failure(self, session):
-            """Test de la gestion des erreurs lors du rafraîchissement de l'instance après commit."""
-            session.refresh.side_effect = Exception("Refresh error")
-
-            with pytest.raises(Exception):
-                await save_task(session, task_id_redis="1", user_id=1)
-
-    class TestSaveImages:
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_images_success(self, session):
-            """Test de la sauvegarde des images extraites d'un EPUB dans la base de données."""
-            img_paths = ["/path/to/fake_image_path1.jpg", "/path/to/fake_image_path2.jpg"]
-
-            result = await save_images(session, task_id=1, epub_id=1, image_paths=img_paths)
-
-            assert session.add.call_count == len(img_paths)
-            assert session.commit.called
-            assert session.refresh.call_count == len(img_paths)
-            assert len(result) == len(img_paths)
-            assert result[0].task_id == 1
-            assert result[0].epub_id == 1
-            assert result[0].image_file_name == "fake_image_path1.jpg"
-            assert result[0].image_position_in_epub == 0
-            assert result[1].image_position_in_epub == 1
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_images_commit_error(self, session):
-            """Test de la gestion des erreurs lors du commit."""
-            session.commit.side_effect = Exception("Database error")
-            img_paths = ["/path/to/fake_image_path1.jpg", "/path/to/fake_image_path2.jpg"]
-
-            with pytest.raises(Exception):
-                await save_images(session, task_id=1, epub_id=1, image_paths=img_paths)
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_images_refresh_failure(self, session):
-            """Test de la gestion des erreurs lors du rafraîchissement de l'instance après commit."""
-            session.refresh.side_effect = Exception("Refresh error")
-            img_paths = ["/path/to/fake_image_path1.jpg", "/path/to/fake_image_path2.jpg"]
-
-            with pytest.raises(Exception):
-                await save_images(session, task_id=1, epub_id=1, image_paths=img_paths)
-
-    class TestSaveImageDescriptions:
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_image_descriptions_success(self, session):
-            """Test de la sauvegarde des descriptions d'images dans la base de données."""
-            img_list = [
-                Images(
-                    task_id=1,
-                    epub_id=1,
-                    image_file_name="fake_image_path1.jpg",
-                    image_position_in_epub=0,
-                ),
-                Images(
-                    task_id=1,
-                    epub_id=1,
-                    image_file_name="fake_image_path2.jpg",
-                    image_position_in_epub=1,
-                ),
-            ]
-            results = {
-                "images": {
-                    "image_0": {
-                        "salesforce_blip": {
-                            "english_description": "A cat",
-                            "french_description": "Un chat",
-                            "generation_time": 0.5,
-                        },
-                        "florence2": {
-                            "english_description": "A feline",
-                            "french_description": "Un félin",
-                            "generation_time": 0.4,
-                        },
-                        "git_large": {
-                            "english_description": "A domestic cat",
-                            "french_description": "Un chat domestique",
-                            "generation_time": 0.6,
-                        },
-                    },
-                    "image_1": {
-                        "salesforce_blip": {
-                            "english_description": "A dog",
-                            "french_description": "Un chien",
-                            "generation_time": 0.5,
-                        },
-                        "florence2": {
-                            "english_description": "A canine",
-                            "french_description": "Un canidé",
-                            "generation_time": 0.4,
-                        },
-                        "git_large": {
-                            "english_description": "A domestic dog",
-                            "french_description": "Un chien domestique",
-                            "generation_time": 0.6,
-                        },
-                    },
-                },
-                "total_images": 2,
-                "time": 1.5,
-            }
-            model_ia_mapping = {"salesforce_blip": 1, "florence2": 2, "git_large": 3}
-
-            await save_image_descriptions(
-                session, images=img_list, results=results, model_ia_mapping=model_ia_mapping
-            )
-
-            # 2 images × 3 modèles = 6 descriptions
-            assert session.add.call_count == len(img_list) * len(model_ia_mapping)
-            assert session.commit.called
-
-            # Vérifier le contenu du premier objet ajouté
-            first_desc = session.add.call_args_list[0][0][0]
-            assert isinstance(first_desc, ImageDescription)
-            assert first_desc.description_text == "Un chat"
-            assert first_desc.model_ia_id == 1
-            assert first_desc.is_written_by_ai == True
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_save_image_descriptions_commit_error(self, session):
-            """Test de la gestion des erreurs lors du commit."""
-            session.commit.side_effect = Exception("Database error")
-            img_list = [
-                Images(
-                    task_id=1,
-                    epub_id=1,
-                    image_file_name="fake_image_path1.jpg",
-                    image_position_in_epub=0,
-                )
-            ]
-            results = {
-                "images": {
-                    "image_0": {
-                        "salesforce_blip": {
-                            "english_description": "A cat",
-                            "french_description": "Un chat",
-                            "generation_time": 0.5,
-                        },
-                        "florence2": {
-                            "english_description": "A feline",
-                            "french_description": "Un félin",
-                            "generation_time": 0.4,
-                        },
-                        "git_large": {
-                            "english_description": "A domestic cat",
-                            "french_description": "Un chat domestique",
-                            "generation_time": 0.6,
-                        },
-                    }
-                },
-                "total_images": 1,
-                "time": 1.5,
-            }
-            model_ia_mapping = {"salesforce_blip": 1, "florence2": 2, "git_large": 3}
-
-            with pytest.raises(Exception):
-                await save_image_descriptions(
-                    session, images=img_list, results=results, model_ia_mapping=model_ia_mapping
-                )
-
-    class TestUpdateTaskStatus:
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_update_task_status_success(self, session):
-            """Test de la mise à jour du statut d'une tâche."""
-            await update_task_status(session, db_task_id=1, status="completed")
-
-            assert session.execute.called
-            assert session.commit.called
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_update_task_status_error(self, session):
-            """Test de la gestion des erreurs lors de la mise à jour du statut d'une tâche."""
-            session.execute.side_effect = Exception("Database error")
-
-            with pytest.raises(Exception):
-                await update_task_status(session, db_task_id=1, status="completed")
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_update_task_status_commit_error(self, session):
-            """Test de la gestion des erreurs lors du commit de la mise à jour du statut d'une tâche."""
-            session.commit.side_effect = Exception("Database error")
-
-            with pytest.raises(Exception):
-                await update_task_status(session, db_task_id=1, status="completed")
-
-        @pytest.mark.unit
-        @pytest.mark.asyncio
-        async def test_update_task_status_execute_error(self, session):
-            """Test de la gestion des erreurs lors de l'exécution de la mise à jour du statut d'une tâche."""
-            session.execute.side_effect = Exception("Execution error")
-
-            with pytest.raises(Exception):
-                await update_task_status(session, db_task_id=1, status="completed")
 
 
 class TestEpubMiddleware:

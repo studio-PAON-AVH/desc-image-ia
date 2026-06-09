@@ -3,16 +3,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 
-@pytest.fixture
-def mock_session():
-    session = AsyncMock()
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-    session.refresh = AsyncMock()
-    session.execute = AsyncMock()
-    return session
-
-
 class TestCreateTask:
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -111,6 +101,83 @@ class TestCreateImageDescriptionsBatch:
         await create_image_descriptions_batch(mock_session, [mock_image], results, model_ia_mapping)
 
         mock_session.add.assert_not_called()
+
+
+class TestSaveImageDescriptionsSlice:
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_inserts_only_descriptions_with_french_text(self, mock_session):
+        from backend.epub.repository import save_image_descriptions_slice
+
+        img0, img1 = MagicMock(id=10), MagicMock(id=11)
+        slice_map = {
+            0: {"french_description": "Un chien"},
+            1: {"french_description": None},  # ignoré
+        }
+
+        written = await save_image_descriptions_slice(
+            mock_session, [img0, img1], model_id=2, slice_map=slice_map
+        )
+
+        assert written == 1
+        added = mock_session.add.call_args[0][0]
+        assert added.image_id == 10
+        assert added.model_ia_id == 2
+        assert added.description_text == "Un chien"
+        # delete-then-insert : un execute (delete) avant l'add retenu
+        assert mock_session.execute.call_count == 1
+        mock_session.commit.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_is_idempotent_deletes_before_insert(self, mock_session):
+        """Deux appels successifs ne créent pas de doublon : delete avant chaque insert."""
+        from backend.epub.repository import save_image_descriptions_slice
+
+        img0 = MagicMock(id=10)
+        slice_map = {0: {"french_description": "Un chien"}}
+
+        await save_image_descriptions_slice(mock_session, [img0], 2, slice_map)
+        await save_image_descriptions_slice(mock_session, [img0], 2, slice_map)
+
+        # chaque appel : 1 delete (execute) + 1 add
+        assert mock_session.execute.call_count == 2
+        assert mock_session.add.call_count == 2
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_ignores_out_of_range_index(self, mock_session):
+        from backend.epub.repository import save_image_descriptions_slice
+
+        img0 = MagicMock(id=10)
+        slice_map = {0: {"french_description": "ok"}, 5: {"french_description": "hors borne"}}
+
+        written = await save_image_descriptions_slice(mock_session, [img0], 1, slice_map)
+
+        assert written == 1
+        assert mock_session.add.call_count == 1
+
+
+class TestTaskCounters:
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_set_total_images(self, mock_session):
+        from backend.epub.repository import set_task_total_images
+
+        await set_task_total_images(mock_session, db_task_id=5, total=12)
+
+        mock_session.execute.assert_called_once()
+        mock_session.commit.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_set_processed_images(self, mock_session):
+        from backend.epub.repository import set_task_processed_images
+
+        await set_task_processed_images(mock_session, db_task_id=5, processed=3)
+
+        mock_session.execute.assert_called_once()
+        mock_session.commit.assert_called_once()
 
 
 class TestUpdateTaskStatus:

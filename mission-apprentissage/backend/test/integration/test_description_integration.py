@@ -1,11 +1,18 @@
 """Tests d'intégration pour la récupération et validation des descriptions."""
 
-import io
 import pytest
 from datetime import datetime
 from sqlalchemy import select
 
-from backend.core.database.config import Task, Epub, Images, ImageDescription, ModelsIA, User
+from backend.core.database.config import (
+    Task,
+    Epub,
+    Images,
+    DescriptionByIA,
+    DescriptionFinale,
+    ModelsIA,
+    User,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -25,7 +32,7 @@ def _register_and_login(
 
 async def _create_db_fixtures(session, user_id: int, task_id_redis: str) -> dict:
     """
-    Crée directement en DB : Task, Epub, Images, ModelsIA, ImageDescriptions.
+    Crée directement en DB : Task, Epub, Images, ModelsIA, DescriptionByIA, DescriptionFinale.
     Retourne les objets créés.
     """
     # Task
@@ -36,7 +43,6 @@ async def _create_db_fixtures(session, user_id: int, task_id_redis: str) -> dict
         total_images=1,
         processed_images=1,
         created_at=datetime.now(),
-        updated_at=datetime.now(),
         started_at=datetime.now(),
         completed_at=datetime.now(),
     )
@@ -89,24 +95,32 @@ async def _create_db_fixtures(session, user_id: int, task_id_redis: str) -> dict
     session.add_all([model_salesforce, model_florence, model_git])
     await session.flush()
 
-    # Descriptions
+    # Descriptions IA (3 modèles)
     for model, text in [
         (model_salesforce, "Description Salesforce BLIP"),
         (model_florence, "Description Florence-2"),
         (model_git, "Description GIT Large"),
     ]:
-        desc = ImageDescription(
+        desc = DescriptionByIA(
             image_id=image.id,
             model_ia_id=model.id,
             description_text=text,
-            is_written_by_ai=True,
-            is_written_by_human=False,
-            generated_at=datetime.now(),
-            validated_by_human=False,
             created_at=datetime.now(),
             updated_at=datetime.now(),
         )
         session.add(desc)
+
+    # Description finale (validée par l'humain — modèle Salesforce choisi)
+    final = DescriptionFinale(
+        user_id=user_id,
+        image_id=image.id,
+        model_ia_id=model_salesforce.id,
+        description_text="Description Salesforce BLIP",
+        validated_by_human=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+    )
+    session.add(final)
 
     await session.commit()
 
@@ -203,9 +217,6 @@ class TestDescriptionIntegration:
             assert "description_text" in desc
             assert "model_name" in desc
             assert "model_key" in desc
-            assert "is_written_by_ai" in desc
-            assert "is_written_by_human" in desc
-            assert "validated_by_human" in desc
 
     async def test_get_descriptions_task_belonging_to_other_user_returns_404(
         self, client, async_session
@@ -276,8 +287,6 @@ class TestDescriptionIntegration:
                     "image_index": 0,
                     "text": "Description Salesforce BLIP",
                     "model": "salesforce_blip",
-                    "is_written_by_ai": True,
-                    "is_written_by_human": False,
                 }
             ]
         }

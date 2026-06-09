@@ -92,14 +92,24 @@ class TestEpubIntegration:
         r2 = _upload_epub(client, token, epub_bytes, filename)
         assert r2.status_code == 409, r2.text
 
-    async def test_upload_non_epub_file_returns_error(self, client):
-        """Uploader un fichier non .epub retourne 400."""
-        token = _register_and_login(client, "epub_invalid_ext@example.com")
-        fake_content = b"This is not an epub file"
+    @pytest.mark.parametrize(
+        "filename, content, content_type, email",
+        [
+            ("document.txt", b"This is not an epub file", "text/plain",
+             "epub_invalid_txt@example.com"),
+            ("document.pdf", b"%PDF-1.4 fake pdf content", "application/pdf",
+             "epub_invalid_pdf@example.com"),
+        ],
+    )
+    async def test_upload_non_epub_file_returns_400(
+        self, client, filename, content, content_type, email
+    ):
+        """Uploader un fichier dont l'extension n'est pas .epub retourne 400."""
+        token = _register_and_login(client, email)
 
         response = client.post(
             "/api/epub/upload-epub",
-            files={"upload": ("document.txt", io.BytesIO(fake_content), "text/plain")},
+            files={"upload": (filename, io.BytesIO(content), content_type)},
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 400, response.text
@@ -113,18 +123,6 @@ class TestEpubIntegration:
             files={"upload": ("noauth.epub", io.BytesIO(epub_bytes), "application/epub+zip")},
         )
         assert response.status_code == 401, response.text
-
-    async def test_upload_pdf_file_returns_error(self, client):
-        """Uploader un fichier .pdf (pas .epub) retourne 400."""
-        token = _register_and_login(client, "epub_pdf_ext@example.com")
-        fake_pdf = b"%PDF-1.4 fake pdf content"
-
-        response = client.post(
-            "/api/epub/upload-epub",
-            files={"upload": ("document.pdf", io.BytesIO(fake_pdf), "application/pdf")},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code == 400, response.text
 
     async def test_download_epub_not_found_returns_404(self, client):
         """Télécharger un fichier inexistant retourne 404."""

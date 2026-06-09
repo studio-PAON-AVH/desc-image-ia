@@ -1,9 +1,7 @@
 """Tests d'intégration pour la gestion des tâches."""
 
 import io
-import json
 import pytest
-from unittest.mock import patch
 from sqlalchemy import select
 
 from backend.core.database.config import Task
@@ -49,7 +47,7 @@ def _upload_epub(client, token: str, epub_bytes: bytes, filename: str = "task_te
 @pytest.mark.asyncio
 class TestTaskIntegration:
     async def test_create_task_saves_to_db(self, client, async_session):
-        """Uploader un EPUB crée une tâche en DB avec le status 'pending'."""
+        """Uploader un EPUB crée une tâche en DB avec le bon user_id et les valeurs initiales."""
         token = _register_and_login(client, "task_create_db@example.com")
         epub_bytes = _create_minimal_epub()
 
@@ -63,6 +61,9 @@ class TestTaskIntegration:
         assert task is not None
         assert task.task_id_redis == task_id
         assert task.status == "pending"
+        assert task.user_id is not None
+        assert task.total_images == 0
+        assert task.processed_images == 0
 
     async def test_get_task_status_returns_correct_status(self, client, async_session):
         """GET /api/task/{task_id} retourne les données de la tâche (202 si en attente)."""
@@ -113,22 +114,6 @@ class TestTaskIntegration:
         response = client.get("/api/task/some-task-id")
         assert response.status_code == 401, response.text
 
-    async def test_task_status_in_db_after_upload(self, client, async_session):
-        """La tâche créée après upload a le bon user_id et le statut initial."""
-        token = _register_and_login(client, "task_user_id@example.com")
-        epub_bytes = _create_minimal_epub()
-
-        upload_resp = _upload_epub(client, token, epub_bytes, "task_userid.epub")
-        assert upload_resp.status_code in (200, 201), upload_resp.text
-        task_id = upload_resp.json()["task_id"]
-
-        result = await async_session.execute(select(Task).where(Task.task_id_redis == task_id))
-        task = result.scalars().first()
-        assert task is not None
-        assert task.user_id is not None
-        assert task.total_images == 0
-        assert task.processed_images == 0
-
     async def test_get_all_tasks_as_non_admin_returns_403(self, client):
         """GET /api/task/admin par un utilisateur normal retourne 403."""
         token = _register_and_login(client, "task_nonadmin@example.com", username="nonadmin")
@@ -138,20 +123,3 @@ class TestTaskIntegration:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 403, response.text
-
-    async def test_get_task_without_redis_result_returns_202_or_200(self, client):
-        """Juste après upload, le résultat redis est 'en attente' → 202."""
-        token = _register_and_login(
-            client, "task_pending_result@example.com", username="pendinguser"
-        )
-        epub_bytes = _create_minimal_epub()
-
-        upload_resp = _upload_epub(client, token, epub_bytes, "task_pending.epub")
-        assert upload_resp.status_code in (200, 201), upload_resp.text
-        task_id = upload_resp.json()["task_id"]
-
-        response = client.get(
-            f"/api/task/{task_id}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code in (200, 202), response.text

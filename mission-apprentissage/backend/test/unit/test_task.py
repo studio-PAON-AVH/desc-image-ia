@@ -1,63 +1,101 @@
+import json
 import pytest
-from dotenv import load_dotenv
 from unittest.mock import AsyncMock, MagicMock
 
-load_dotenv()
 
+class TestGetTaskResult:
+    """Tests des branches de polling de get_task_result (pending/in_progress/completed)."""
 
-@pytest.fixture
-def mock_user():
-    user = MagicMock()
-    user.id = 1
-    return user
+    def _setup(self, mocker, redis_payload):
+        from backend.tasks import controller
 
+        task = MagicMock()
+        task.user_id = 1
+        mocker.patch.object(
+            controller, "find_task_by_redis_id", new=AsyncMock(return_value=task)
+        )
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps(redis_payload).encode("utf-8")
+        mocker.patch.object(controller, "redis_dev", mock_redis)
+        return controller
 
-@pytest.fixture
-def session(mocker):
-    mock = mocker.MagicMock()
-    mock.add = mocker.MagicMock(return_value=None)
-    mock.commit = mocker.AsyncMock(return_value=None)
-    mock.refresh = mocker.AsyncMock(return_value=None)
-    mock.execute = mocker.AsyncMock(return_value=None)
-    return mock
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_pending_returns_202(self, mocker):
+        controller = self._setup(mocker, {"status": "en attente", "epub_path": "/x"})
+        current_user = MagicMock(id=1)
+
+        resp = await controller.get_task_result("t1", current_user, db=MagicMock())
+
+        assert resp.status_code == 202
+        body = json.loads(resp.body)
+        assert body["completed"] is False
+        assert body["status"] == "pending"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_in_progress_returns_partial(self, mocker):
+        payload = {
+            "status": "in_progress",
+            "total_images": 4,
+            "processed_images": 1,
+            "descriptions": {"images": {"image_0": {}}, "total_images": 4},
+        }
+        controller = self._setup(mocker, payload)
+        current_user = MagicMock(id=1)
+
+        resp = await controller.get_task_result("t1", current_user, db=MagicMock())
+
+        assert resp["completed"] is False
+        assert resp["status"] == "in_progress"
+        assert resp["total_images"] == 4
+        assert resp["processed_images"] == 1
+        assert resp["result"] == payload["descriptions"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_completed_returns_final(self, mocker):
+        payload = {"status": "completed", "total_images": 1, "descriptions": {"images": {}}}
+        controller = self._setup(mocker, payload)
+        current_user = MagicMock(id=1)
+
+        resp = await controller.get_task_result("t1", current_user, db=MagicMock())
+
+        assert resp["completed"] is True
+        assert resp["status"] == "completed"
+        assert resp["result"] == payload
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_legacy_payload_without_status_returns_final(self, mocker):
+        payload = {"epub_path": "/x", "descriptions": {"images": {}}}
+        controller = self._setup(mocker, payload)
+        current_user = MagicMock(id=1)
+
+        resp = await controller.get_task_result("t1", current_user, db=MagicMock())
+
+        assert resp["completed"] is True
+        assert resp["result"] == payload
 
 
 class TestTaskService:
     class TestGetModelKey:
         @pytest.mark.unit
-        def test_get_model_key_salesforce(self):
-            """Test que 'Salesforce BLIP' (nom réel en DB) retourne la clé salesforce_blip."""
+        @pytest.mark.parametrize(
+            "db_name, expected",
+            [
+                ("Salesforce BLIP", "salesforce_blip"),
+                ("Florence-2", "florence2"),
+                ("GIT Large", "git_large"),
+                (None, None),
+                ("unknown_model", "unknown_model"),
+            ],
+        )
+        def test_get_model_key(self, db_name, expected):
+            """Mappe le nom réel d'un modèle en DB vers sa clé interne (None et nom inconnu inclus)."""
             from backend.tasks.service import _get_model_key
 
-            assert _get_model_key("Salesforce BLIP") == "salesforce_blip"
-
-        @pytest.mark.unit
-        def test_get_model_key_florence(self):
-            """Test que 'Florence-2' (nom réel en DB) retourne la clé florence2."""
-            from backend.tasks.service import _get_model_key
-
-            assert _get_model_key("Florence-2") == "florence2"
-
-        @pytest.mark.unit
-        def test_get_model_key_git(self):
-            """Test que 'GIT Large' (nom réel en DB) retourne la clé git_large."""
-            from backend.tasks.service import _get_model_key
-
-            assert _get_model_key("GIT Large") == "git_large"
-
-        @pytest.mark.unit
-        def test_get_model_key_none(self):
-            """Test que None retourne None."""
-            from backend.tasks.service import _get_model_key
-
-            assert _get_model_key(None) is None
-
-        @pytest.mark.unit
-        def test_get_model_key_unknown(self):
-            """Test qu'un nom inconnu est retourné tel quel."""
-            from backend.tasks.service import _get_model_key
-
-            assert _get_model_key("unknown_model") == "unknown_model"
+            assert _get_model_key(db_name) == expected
 
     class TestGetTaskDescriptions:
         @pytest.mark.unit
@@ -224,9 +262,10 @@ class TestTaskService:
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_validate_task_descriptions_human_written(self, session):
-            """Test qu'une description humaine crée une nouvelle ImageDescription."""
+            """Une description écrite à la main (model=None) crée une nouvelle DescriptionFinale."""
             mock_task = MagicMock()
             mock_task.id = 1
+            mock_task.user_id = 42
 
             mock_image = MagicMock()
             mock_image.id = 5
@@ -244,20 +283,23 @@ class TestTaskService:
             mock_models_result = MagicMock()
             mock_models_result.scalars.return_value.all.return_value = [mock_model]
 
-            mock_delete_result = MagicMock()
+            # upsert_final_description appelle find_final_description_by_image :
+            # on simule l'absence de description existante pour forcer la création.
+            mock_existing_result = MagicMock()
+            mock_existing_result.scalar_one_or_none.return_value = None
 
             session.execute = AsyncMock(
                 side_effect=[
                     mock_task_result,
                     mock_images_result,
                     mock_models_result,
-                    mock_delete_result,
+                    mock_existing_result,
                 ]
             )
 
             desc_data = MagicMock()
             desc_data.image_index = 0
-            desc_data.is_written_by_human = True
+            desc_data.model = None
             desc_data.text = "Description écrite par un humain"
 
             from backend.tasks.service import validate_task_descriptions
@@ -271,8 +313,9 @@ class TestTaskService:
             session.commit.assert_called_once()
 
             added_desc = session.add.call_args[0][0]
-            assert added_desc.is_written_by_human is True
-            assert added_desc.is_written_by_ai is False
+            assert added_desc.image_id == 5
+            assert added_desc.user_id == 42
+            assert added_desc.model_ia_id is None
             assert added_desc.description_text == "Description écrite par un humain"
             assert added_desc.validated_by_human is True
 

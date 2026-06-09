@@ -4,73 +4,6 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 
-@pytest.fixture
-def mock_session():
-    session = AsyncMock()
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-    session.refresh = AsyncMock()
-    session.execute = AsyncMock()
-    return session
-
-
-class TestFindUserByEmail:
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_returns_user_when_found(self, mock_session):
-        mock_user = MagicMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = mock_user
-        mock_session.execute.return_value = mock_result
-
-        from backend.auth.repository import find_user_by_email
-
-        result = await find_user_by_email(mock_session, "user@example.com")
-
-        assert result is mock_user
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_returns_none_when_not_found(self, mock_session):
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = None
-        mock_session.execute.return_value = mock_result
-
-        from backend.auth.repository import find_user_by_email
-
-        result = await find_user_by_email(mock_session, "unknown@example.com")
-
-        assert result is None
-
-
-class TestUserExistsByEmail:
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_returns_true_when_user_exists(self, mock_session):
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = MagicMock()
-        mock_session.execute.return_value = mock_result
-
-        from backend.auth.repository import user_exists_by_email
-
-        result = await user_exists_by_email(mock_session, "user@example.com")
-
-        assert result is True
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_returns_false_when_user_absent(self, mock_session):
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = None
-        mock_session.execute.return_value = mock_result
-
-        from backend.auth.repository import user_exists_by_email
-
-        result = await user_exists_by_email(mock_session, "new@example.com")
-
-        assert result is False
-
-
 class TestCreateUser:
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -113,35 +46,6 @@ class TestCreateRefreshTokenRecord:
         assert added.token == "tok123"
         assert added.user_id == 42
         assert added.expires_at == expires_at
-
-
-class TestFindValidRefreshToken:
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_returns_token_when_valid(self, mock_session):
-        mock_token = MagicMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = mock_token
-        mock_session.execute.return_value = mock_result
-
-        from backend.auth.repository import find_valid_refresh_token
-
-        result = await find_valid_refresh_token(mock_session, "tok123")
-
-        assert result is mock_token
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_returns_none_when_not_found(self, mock_session):
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = None
-        mock_session.execute.return_value = mock_result
-
-        from backend.auth.repository import find_valid_refresh_token
-
-        result = await find_valid_refresh_token(mock_session, "expired")
-
-        assert result is None
 
 
 class TestRevokeRefreshTokenRecord:

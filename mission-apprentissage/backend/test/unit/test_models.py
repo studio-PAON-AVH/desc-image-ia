@@ -5,10 +5,6 @@ from pydantic import BaseModel
 from typing import List
 from fastapi.testclient import TestClient
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 # ── Mock heavy ML dependencies BEFORE importing model modules ──
 sys.modules.setdefault("transformers", MagicMock())
 sys.modules.setdefault("torch", MagicMock())
@@ -38,182 +34,68 @@ _MOCK_MODEL = MagicMock()
 
 
 # ─────────────────────────────────────────────
-# Model 1 — Salesforce BLIP (endpoint /describe)
+# Les 3 microservices modèles (model1/2/3) exposent le même contrat
+# (GET / + POST /describe). On les teste via un seul jeu paramétré.
 # ─────────────────────────────────────────────
 
+MODELS = [
+    pytest.param(
+        salesforce_app,
+        "backend.models.model1.saleforce_cpu_large",
+        "salesforce_cpu_large",
+        id="salesforce",
+    ),
+    pytest.param(
+        florence_app,
+        "backend.models.model2.florence2_large",
+        "florence2_large",
+        id="florence",
+    ),
+    pytest.param(
+        git_app,
+        "backend.models.model3.git_large",
+        "git_large",
+        id="git",
+    ),
+]
 
-class TestSalesforceEndpoint:
+
+def _patch_model(mocker, module):
+    """Mocke le chargement du modèle et process_image pour un microservice donné."""
+    mocker.patch(f"{module}._get_model", return_value=(_MOCK_PROCESSOR, _MOCK_MODEL))
+    mocker.patch(f"{module}.process_image", new=AsyncMock(return_value=_MOCK_RESULT))
+
+
+@pytest.mark.parametrize("app, module, status_label", MODELS)
+class TestModelDescribeEndpoint:
     @pytest.mark.unit
-    def test_root_returns_status(self):
-        client = TestClient(salesforce_app)
-        resp = client.get("/")
+    def test_root_returns_status(self, app, module, status_label):
+        resp = TestClient(app).get("/")
         assert resp.status_code == 200
-        assert "salesforce_cpu_large" in resp.json()["status"]
+        assert status_label in resp.json()["status"]
 
     @pytest.mark.unit
-    def test_describe_empty_list_returns_empty(self, mocker):
-        mocker.patch(
-            "backend.models.model1.saleforce_cpu_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model1.saleforce_cpu_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(salesforce_app).post("/describe", json={"images": []})
+    def test_describe_empty_list_returns_empty(self, mocker, app, module, status_label):
+        _patch_model(mocker, module)
+        resp = TestClient(app).post("/describe", json={"images": []})
         assert resp.status_code == 200
         assert resp.json() == {"results": []}
 
     @pytest.mark.unit
-    def test_describe_single_image_returns_result(self, mocker):
-        mocker.patch(
-            "backend.models.model1.saleforce_cpu_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model1.saleforce_cpu_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(salesforce_app).post("/describe", json={"images": ["aGVsbG8="]})
+    def test_describe_single_image_returns_result(self, mocker, app, module, status_label):
+        _patch_model(mocker, module)
+        resp = TestClient(app).post("/describe", json={"images": ["aGVsbG8="]})
         assert resp.status_code == 200
         body = resp.json()
-        assert "results" in body
         assert len(body["results"]) == 1
         assert body["results"][0]["success"] is True
         assert body["results"][0]["english_description"] == "a dog on a beach"
         assert body["results"][0]["french_description"] == "un chien sur une plage"
 
     @pytest.mark.unit
-    def test_describe_multiple_images(self, mocker):
-        mocker.patch(
-            "backend.models.model1.saleforce_cpu_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model1.saleforce_cpu_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(salesforce_app).post(
-            "/describe", json={"images": ["img1", "img2", "img3"]}
-        )
-        assert resp.status_code == 200
-        assert len(resp.json()["results"]) == 3
-
-
-# ─────────────────────────────────────────────
-# Model 2 — Florence-2 (endpoint /describe)
-# ─────────────────────────────────────────────
-
-
-class TestFlorenceEndpoint:
-    @pytest.mark.unit
-    def test_root_returns_status(self):
-        client = TestClient(florence_app)
-        resp = client.get("/")
-        assert resp.status_code == 200
-        assert "florence2_large" in resp.json()["status"]
-
-    @pytest.mark.unit
-    def test_describe_empty_list_returns_empty(self, mocker):
-        mocker.patch(
-            "backend.models.model2.florence2_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model2.florence2_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(florence_app).post("/describe", json={"images": []})
-        assert resp.status_code == 200
-        assert resp.json() == {"results": []}
-
-    @pytest.mark.unit
-    def test_describe_single_image_returns_result(self, mocker):
-        mocker.patch(
-            "backend.models.model2.florence2_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model2.florence2_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(florence_app).post("/describe", json={"images": ["aGVsbG8="]})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "results" in body
-        assert len(body["results"]) == 1
-        assert body["results"][0]["english_description"] == "a dog on a beach"
-
-    @pytest.mark.unit
-    def test_describe_multiple_images(self, mocker):
-        mocker.patch(
-            "backend.models.model2.florence2_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model2.florence2_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(florence_app).post("/describe", json={"images": ["img1", "img2"]})
-        assert resp.status_code == 200
-        assert len(resp.json()["results"]) == 2
-
-
-# ─────────────────────────────────────────────
-# Model 3 — Microsoft GIT Large (endpoint /describe)
-# ─────────────────────────────────────────────
-
-
-class TestGitEndpoint:
-    @pytest.mark.unit
-    def test_root_returns_status(self):
-        client = TestClient(git_app)
-        resp = client.get("/")
-        assert resp.status_code == 200
-        assert "git_large" in resp.json()["status"]
-
-    @pytest.mark.unit
-    def test_describe_empty_list_returns_empty(self, mocker):
-        mocker.patch(
-            "backend.models.model3.git_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model3.git_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(git_app).post("/describe", json={"images": []})
-        assert resp.status_code == 200
-        assert resp.json() == {"results": []}
-
-    @pytest.mark.unit
-    def test_describe_single_image_returns_result(self, mocker):
-        mocker.patch(
-            "backend.models.model3.git_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model3.git_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(git_app).post("/describe", json={"images": ["aGVsbG8="]})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "results" in body
-        assert len(body["results"]) == 1
-        assert body["results"][0]["success"] is True
-
-    @pytest.mark.unit
-    def test_describe_multiple_images(self, mocker):
-        mocker.patch(
-            "backend.models.model3.git_large._get_model",
-            return_value=(_MOCK_PROCESSOR, _MOCK_MODEL),
-        )
-        mocker.patch(
-            "backend.models.model3.git_large.process_image",
-            new=AsyncMock(return_value=_MOCK_RESULT),
-        )
-        resp = TestClient(git_app).post("/describe", json={"images": ["img1", "img2", "img3"]})
+    def test_describe_multiple_images(self, mocker, app, module, status_label):
+        _patch_model(mocker, module)
+        resp = TestClient(app).post("/describe", json={"images": ["img1", "img2", "img3"]})
         assert resp.status_code == 200
         assert len(resp.json()["results"]) == 3
 

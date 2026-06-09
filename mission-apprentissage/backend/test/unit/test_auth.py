@@ -2,7 +2,6 @@ import pytest
 import os
 import datetime
 
-from dotenv import load_dotenv
 from unittest.mock import AsyncMock, MagicMock
 import jwt
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
@@ -14,13 +13,10 @@ from backend.auth.service import (
     validate_refresh_token,
     revoke_refresh_token,
     authenticate_user,
-    get_user,
     hash_password,
     verify_password,
 )
 from backend.auth.middleware import get_current_user, is_admin
-
-load_dotenv()
 
 
 # ── Service — tokens ──────────────────────────────────────────────────────────
@@ -51,6 +47,7 @@ def test_create_access_token_with_expires_delta():
 async def test_create_refresh_token():
     """create_refresh_token retourne un token string et appelle add + commit."""
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()  # Session.add est synchrone
     mock_result = MagicMock()
     mock_user = MagicMock()
     mock_user.id = 42
@@ -136,36 +133,6 @@ def test_verify_password_wrong():
 
 
 # ── Service — utilisateur ─────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_get_user_found():
-    """get_user retourne l'utilisateur si présent en DB."""
-    mock_user = MagicMock()
-    mock_user.email = "testuser@example.com"
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.first.return_value = mock_user
-    mock_db = AsyncMock()
-    mock_db.execute.return_value = mock_result
-
-    result = await get_user(mock_db, "testuser@example.com")
-
-    assert result.email == "testuser@example.com"
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_get_user_not_found():
-    """get_user retourne None si l'utilisateur est absent."""
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.first.return_value = None
-    mock_db = AsyncMock()
-    mock_db.execute.return_value = mock_result
-
-    result = await get_user(mock_db, "unknown@example.com")
-
-    assert result is None
 
 
 @pytest.mark.unit

@@ -5,13 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 from backend.descriptions.service import get_validated_description, add_descriptions
 
 
-@pytest.fixture
-def session(mocker):
-    mock = mocker.MagicMock()
-    mock.execute = mocker.AsyncMock(return_value=None)
-    return mock
-
-
 def make_epub_zip(tmp_path, image_name="cat.jpg", add_opf=True):
     """Crée un fichier epub (zip) minimal dans tmp_path et retourne son chemin."""
     epub_path = str(tmp_path / "book.epub")
