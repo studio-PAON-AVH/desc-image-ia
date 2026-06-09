@@ -6,7 +6,7 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
-from database import Base
+from backend.core.database.config import Base
 
 load_dotenv()
 
@@ -17,7 +17,7 @@ SYNC_DATABASE_URL = (
     f"postgresql+psycopg2://"
     f"{os.getenv('POSTGRES_USER')}:"
     f"{os.getenv('POSTGRES_PASSWORD')}@"
-    f"localhost:5432/"
+    f"{os.getenv('POSTGRES_HOST', 'localhost')}:5432/"
     f"{os.getenv('POSTGRES_DB')}"
 )
 config.set_main_option("sqlalchemy.url", SYNC_DATABASE_URL)

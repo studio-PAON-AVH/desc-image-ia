@@ -5,4 +5,4 @@ COPY mission-apprentissage/backend /app/backend
 RUN python -m pip install --upgrade pip
 RUN pip install --no-cache-dir --upgrade -e .
 ENV PYTHONPATH=/app
-CMD ["python", "-m", "taskiq", "worker", "backend.worker.worker:broker"]
+CMD ["python", "-m", "taskiq", "worker", "backend.worker.worker:broker", "--workers", "1"]

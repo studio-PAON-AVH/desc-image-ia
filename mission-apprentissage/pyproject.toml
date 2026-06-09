@@ -1,66 +1,62 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
+[tool.poetry]
 name = "mission-apprentissage"
 version = "0.1.0"
 description = "API de description d'images EPUB"
-requires-python = ">=3.11"
-dependencies = [
-    # Framework web
-    "fastapi>=0.121.1",
-    "uvicorn[standard]>=0.38.0",
-    "python-multipart>=0.0.20",
+package-mode = false
 
-    # Base de données
-    "sqlalchemy[asyncio]>=2.0",
-    "asyncpg>=0.29.0",
-    "alembic>=1.13.0",
-    "psycopg2-binary>=2.9.9",
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
 
-    # Django (app frontend)
-    "Django>=5.2.8",
+# Framework web
+fastapi = { extras = ["standard"], version = ">=0.121.1" }
+fastapi-limiter = ">=0.1.6"
+uvicorn = { extras = ["standard"], version = ">=0.38.0" }
+python-multipart = ">=0.0.20"
 
-    # Redis
-    "redis>=7.1.0",
+# Base de données
+sqlalchemy = { extras = ["asyncio"], version = ">=2.0" }
+asyncpg = ">=0.29.0"
+alembic = ">=1.13.0"
+psycopg2-binary = ">=2.9.9"
 
-    # Authentification
-    "pyjwt>=2.8.0",
-    "pwdlib[argon2]>=0.1.0",
+# Django
+django = ">=5.2.8"
 
-    # Task queue
-    "taskiq>=0.12.1",
-    "taskiq-redis>=1.2.2",
-    "ebooklib>=0.20.0",
+# Redis
+redis = ">=7.1.0"
 
-    # HTTP & parsing
-    "httpx>=0.28.1",
-    "requests>=2.32.5",
-    "beautifulsoup4>=4.14.2",
+# Auth
+pyjwt = ">=2.8.0"
+pwdlib = { extras = ["argon2"], version = ">=0.1.0" }
 
-    # Validation & données
-    "pydantic>=2.12.4",
-    "email-validator>=2.3.0",
-    "Pillow>=12.0.0",
-    "PyYAML>=6.0.3",
+# Task queue
+taskiq = ">=0.12.1"
+taskiq-redis = ">=1.2.2"
+ebooklib = ">=0.20.0"
 
-    # Utilitaires
-    "python-dotenv>=1.2.1",
-    "sentry-sdk>=2.44.0",
+# HTTP & parsing
+httpx = ">=0.28.1"
+requests = ">=2.32.5"
+beautifulsoup4 = ">=4.14.2"
 
-]
+# Validation & data
+pydantic = ">=2.12.4"
+email-validator = ">=2.3.0"
+pillow = ">=12.0.0"
+pyyaml = ">=6.0.3"
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=4.0",
-    "pytest-mock>=3.12.0",
-    "pytest-xdist>=3.0",
-    "coverage>=7.0",
-]
+# Utils
+python-dotenv = ">=1.2.1"
+sentry-sdk = ">=2.44.0"
 
-[tool.setuptools.packages.find]
-include = ["backend", "backend.*", "django_app", "django_app.*"]
-exclude = ["migrations"]
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0"
+pytest-asyncio = ">=0.23.0"
+pytest-cov = ">=4.0"
+pytest-mock = ">=3.12.0"
+pytest-xdist = ">=3.0"
+coverage = ">=7.0"
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"

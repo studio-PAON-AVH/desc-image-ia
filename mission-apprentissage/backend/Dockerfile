@@ -5,4 +5,4 @@ COPY mission-apprentissage/backend /app/backend
 RUN python -m pip install --upgrade pip
 RUN pip install --no-cache-dir --upgrade -e .
 ENV PYTHONPATH=/app
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic -c /app/backend/alembic.ini upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port 8000"]
