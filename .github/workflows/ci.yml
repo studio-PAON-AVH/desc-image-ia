@@ -57,12 +57,11 @@ jobs:
         run: pipx install poetry
 
       - name: Install dependencies
-        run: |
-          poetry config virtualenvs.create false
-          poetry -C backend install --with dev --no-root
+        run: poetry -C backend install --with dev --no-root
 
       - name: Run tests with coverage
         run: |
+          source "$(poetry -C backend env info --path)/bin/activate"
           pytest backend/test/unit --cov=backend --cov-report=xml --cov-report=html
 
       - name: Upload coverage report
