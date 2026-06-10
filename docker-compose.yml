@@ -144,6 +144,7 @@ services:
       - "8000:8000"
     environment:
       APP_ENV: .env
+      SERVE_FRONTEND: "False"
       REDIS_URL: redis://redis:6379/1
       REDIS_HOST: redis
       REDIS_PORT: 6379

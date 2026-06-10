@@ -3,7 +3,9 @@ import tempfile
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
 from .epub.router import router as epub_router
 from .tasks.router import router as task_router
 from .descriptions.router import router as description_router
@@ -20,9 +22,20 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+SERVE_FRONTEND = os.getenv("SERVE_FRONTEND", "false").lower() == "true"
+FRONTEND_DIR = os.getenv("FRONTEND_DIR", "/app/frontend_dist")
+
+class SPAStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
 DOWNLOADS_DIR = os.path.join(os.getenv("UPLOAD_TEMP_DIR", tempfile.gettempdir()), "downloads")
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-app.mount("/downloads", StaticFiles(directory=DOWNLOADS_DIR), name="downloads")
 
 VPS_HOST = os.getenv("VPS_HOST")
 
@@ -51,11 +64,15 @@ app.include_router(description_router, prefix="/api/description", tags=["descrip
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 
 
-@app.get("/")
-def read_root():
+@app.get("/api")
+def read_api ():
     return {"message": "Bienvenue sur l'API de description d'images EPUB"}
 
+app.mount("/downloads", StaticFiles(directory=DOWNLOADS_DIR), name="downloads")
 
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+if SERVE_FRONTEND and os.path.isdir(FRONTEND_DIR):
+    app.mount("/", SPAStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")  
