@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: 'pip'
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: backend/pyproject.toml
 
       - name: Install dependencies
         run: pip install pylint
@@ -51,10 +51,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: 'pip'
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install Poetry
+        run: pipx install poetry
 
       - name: Install dependencies
-        run: pip install -e ".[dev]" pytest pytest-cov
+        run: |
+          poetry config virtualenvs.create false
+          poetry -C backend install --with dev --no-root
 
       - name: Run tests with coverage
         run: |
