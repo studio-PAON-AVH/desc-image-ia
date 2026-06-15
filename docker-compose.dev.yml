@@ -161,7 +161,7 @@ services:
   # backend et worker (cf. OTEL_EXPORTER_OTLP_ENDPOINT). Même image et même
   # provisioning de dashboards qu'en dev.
   lgtm:
-    image: grafana/otel-lgtm:dev
+    image: grafana/otel-lgtm:latest
     container_name: container-dev-lgtm
     restart: unless-stopped
     ports:
