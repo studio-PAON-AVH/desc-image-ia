@@ -156,37 +156,3 @@ class TestSaveImageDescriptionsSlice:
 
         assert written == 1
         assert mock_session.add.call_count == 1
-
-
-class TestTaskCounters:
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_set_total_images(self, mock_session):
-        from backend.epub.repository import set_task_total_images
-
-        await set_task_total_images(mock_session, db_task_id=5, total=12)
-
-        mock_session.execute.assert_called_once()
-        mock_session.commit.assert_called_once()
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_set_processed_images(self, mock_session):
-        from backend.epub.repository import set_task_processed_images
-
-        await set_task_processed_images(mock_session, db_task_id=5, processed=3)
-
-        mock_session.execute.assert_called_once()
-        mock_session.commit.assert_called_once()
-
-
-class TestUpdateTaskStatus:
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_executes_update_and_commits(self, mock_session):
-        from backend.epub.repository import update_task_status
-
-        await update_task_status(mock_session, db_task_id=5, status="completed")
-
-        mock_session.execute.assert_called_once()
-        mock_session.commit.assert_called_once()

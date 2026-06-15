@@ -20,8 +20,8 @@ def client(mocker):
 class TestMainEndpoints:
     @pytest.mark.unit
     def test_root_returns_welcome_message(self, client):
-        """GET / retourne le message de bienvenue."""
-        response = client.get("/")
+        """GET /api retourne le message de bienvenue."""
+        response = client.get("/api")
 
         assert response.status_code == 200
         assert response.json() == {"message": "Bienvenue sur l'API de description d'images EPUB"}

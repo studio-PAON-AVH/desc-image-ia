@@ -57,6 +57,7 @@ opentelemetry-instrumentation-redis = ">=0.63b1"
 opentelemetry-instrumentation-httpx = ">=0.63b1"
 opentelemetry-instrumentation-requests = ">=0.63b1"
 opentelemetry-instrumentation-logging = ">=0.63b1"
+deep-translator = "^1.11.4"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0"
