@@ -1,108 +1,24 @@
 name: Build
 
-# Déclenché automatiquement après la fin du workflow CI.
-# Les builds ne tournent que si la CI a réussi ET sur main/develop uniquement.
+# Sur push ou pull request vers main/develop : tests d'intégration, puis
+# build des images si les tests passent (via `needs`). Les images sont
+# poussées uniquement sur push (pas sur pull request).
+# Le lint et les tests unitaires vivent dans ci.yml (workflow séparé).
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch }}
-  cancel-in-progress: ${{ github.event.workflow_run.head_branch != 'main' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  changes:
-    name: Detect changes
-    runs-on: ubuntu-latest
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop')
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      postgresql: ${{ steps.filter.outputs.postgresql }}
-      redis: ${{ steps.filter.outputs.redis }}
-      model1: ${{ steps.filter.outputs.model1 }}
-      model2: ${{ steps.filter.outputs.model2 }}
-      model3: ${{ steps.filter.outputs.model3 }}
-      backend: ${{ steps.filter.outputs.backend }}
-      worker: ${{ steps.filter.outputs.worker }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 2
-
-      - name: Resolve parent commit
-        id: parent
-        run: echo "sha=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
-
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          base: ${{ steps.parent.outputs.sha }}
-          ref: ${{ github.event.workflow_run.head_sha }}
-          filters: |
-            postgresql:
-              - 'backend/core/database/**'
-            redis:
-              - 'backend/redis/**'
-            model1:
-              - 'backend/models/model1/**'
-            model2:
-              - 'backend/models/model2/**'
-            model3:
-              - 'backend/models/model3/**'
-            backend:
-              - 'backend/**'
-              - 'frontend/**'
-              - 'pyproject.toml'
-              - '!backend/worker/**'
-              - '!backend/models/**'
-            worker:
-              - 'backend/worker/**'
-              - 'backend/core/**'
-              - 'backend/epub/**'
-              - 'backend/middlewares/**'
-              - 'backend/utils.py'
-              - 'pyproject.toml'
-
-  prepare:
-    name: Prepare image tag
-    runs-on: ubuntu-latest
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop')
-    outputs:
-      owner: ${{ steps.tag.outputs.owner }}
-      tag: ${{ steps.tag.outputs.tag }}
-    steps:
-      - name: Set image tag
-        id: tag
-        env:
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "owner=${OWNER}" >> "$GITHUB_OUTPUT"
-          SHORT_SHA="${HEAD_SHA::7}"
-          if [ "$HEAD_BRANCH" = "main" ]; then
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          elif [ "$HEAD_BRANCH" = "develop" ]; then
-            echo "tag=dev-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            SAFE_TAG=$(echo "$HEAD_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g' | tr '[:upper:]' '[:lower:]')
-            echo "tag=${SAFE_TAG}" >> "$GITHUB_OUTPUT"
-          fi
-
   test-integration:
     name: Run Integration Tests
     runs-on: ubuntu-latest
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop')
     services:
       postgres:
         image: postgres:16
@@ -128,8 +44,6 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -171,6 +85,78 @@ jobs:
           name: coverage-integration-report
           path: coverage.xml
 
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      postgresql: ${{ steps.filter.outputs.postgresql }}
+      redis: ${{ steps.filter.outputs.redis }}
+      model1: ${{ steps.filter.outputs.model1 }}
+      model2: ${{ steps.filter.outputs.model2 }}
+      model3: ${{ steps.filter.outputs.model3 }}
+      backend: ${{ steps.filter.outputs.backend }}
+      worker: ${{ steps.filter.outputs.worker }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sans `base`/`ref`, paths-filter auto-détecte : la base de la PR sur
+      # pull_request, et la plage poussée (event.before) sur push.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            postgresql:
+              - 'backend/core/database/**'
+            redis:
+              - 'backend/redis/**'
+            model1:
+              - 'backend/models/model1/**'
+            model2:
+              - 'backend/models/model2/**'
+            model3:
+              - 'backend/models/model3/**'
+            backend:
+              - 'backend/**'
+              - 'frontend/**'
+              - 'pyproject.toml'
+              - '!backend/worker/**'
+              - '!backend/models/**'
+            worker:
+              - 'backend/worker/**'
+              - 'backend/core/**'
+              - 'backend/epub/**'
+              - 'backend/middlewares/**'
+              - 'backend/utils.py'
+              - 'pyproject.toml'
+
+  prepare:
+    name: Prepare image tag
+    runs-on: ubuntu-latest
+    outputs:
+      owner: ${{ steps.tag.outputs.owner }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Set image tag
+        id: tag
+        env:
+          HEAD_BRANCH: ${{ github.ref_name }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "owner=${OWNER}" >> "$GITHUB_OUTPUT"
+          SHORT_SHA="${HEAD_SHA::7}"
+          if [ "$HEAD_BRANCH" = "main" ]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          elif [ "$HEAD_BRANCH" = "develop" ]; then
+            echo "tag=dev-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            SAFE_TAG=$(echo "$HEAD_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g' | tr '[:upper:]' '[:lower:]')
+            echo "tag=${SAFE_TAG}" >> "$GITHUB_OUTPUT"
+          fi
+
   build-postgresql:
     name: Build PostgreSQL
     runs-on: ubuntu-latest
@@ -181,8 +167,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -199,12 +183,12 @@ jobs:
         with:
           context: ${{ github.workspace }}/backend/core/database
           file: ${{ github.workspace }}/backend/core/database/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=postgresql
           cache-to: type=gha,scope=postgresql,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/postgres:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/postgres:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/postgres:${{ github.ref_name == 'develop' && 'dev' || github.ref_name == 'main' && 'latest' }}
 
   build-redis:
     name: Build Redis
@@ -216,8 +200,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -233,12 +215,12 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ${{ github.workspace }}/backend/redis
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=redis
           cache-to: type=gha,scope=redis,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/redis:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/redis:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/redis:${{ github.ref_name == 'develop' && 'dev' || github.ref_name == 'main' && 'latest' }}
 
   build-salesforce:
     name: Build Salesforce
@@ -250,8 +232,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -268,12 +248,12 @@ jobs:
         with:
           context: ${{ github.workspace }}
           file: backend/models/model1/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=model1
           cache-to: type=gha,scope=model1,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/model-blip:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/model-blip:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-blip:${{ github.ref_name == 'develop' && 'dev' || github.ref_name == 'main' && 'latest' }}
 
   build-florence2:
     name: Build Florence2
@@ -285,8 +265,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -303,12 +281,12 @@ jobs:
         with:
           context: ${{ github.workspace }}
           file: backend/models/model2/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=model2
           cache-to: type=gha,scope=model2,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/model-florence:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/model-florence:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-florence:${{ github.ref_name == 'develop' && 'dev' || github.ref_name == 'main' && 'latest' }}
 
   build-git:
     name: Build GIT-Large
@@ -320,8 +298,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -338,12 +314,12 @@ jobs:
         with:
           context: ${{ github.workspace }}
           file: backend/models/model3/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=model3
           cache-to: type=gha,scope=model3,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/model-git:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/model-git:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-git:${{ github.ref_name == 'develop' && 'dev' || github.ref_name == 'main' && 'latest' }}
 
   build-fastapi:
     name: Build FastAPI
@@ -355,8 +331,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -373,12 +347,12 @@ jobs:
         with:
           context: ${{ github.workspace }}
           file: backend/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=fastapi
           cache-to: type=gha,scope=fastapi,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/backend:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/backend:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/backend:${{ github.ref_name == 'develop' && 'dev' || github.ref_name == 'main' && 'latest' }}
 
   build-worker:
     name: Build Worker
@@ -390,8 +364,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -408,9 +380,9 @@ jobs:
         with:
           context: ${{ github.workspace }}
           file: backend/worker/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=worker
           cache-to: type=gha,scope=worker,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/worker:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/worker:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/worker:${{ github.ref_name == 'develop' && 'dev' || github.ref_name == 'main' && 'latest' }}
