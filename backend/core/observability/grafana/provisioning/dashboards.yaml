@@ -1,0 +1,14 @@
+# Provisioning Grafana : charge automatiquement les dashboards du dossier
+# dashboards/ au démarrage du conteneur lgtm (monté via docker-compose).
+apiVersion: 1
+
+providers:
+  - name: desc-image-ia
+    folder: desc-image-ia
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /otel-lgtm/grafana/dashboards
+      foldersFromFilesStructure: false

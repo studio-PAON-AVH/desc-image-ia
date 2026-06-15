@@ -2,15 +2,25 @@ import json
 import logging
 import shutil
 import os
+import time
 import base64
 
 from collections import defaultdict
+from opentelemetry import trace
 from sqlalchemy import select
 from taskiq import TaskiqEvents
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 from ..broker import broker
+from ..core.observability.setup import setup_observability
+from ..core.observability.metric import (
+    epub_images_per_file,
+    task_counter,
+    task_duration,
+    worker_tasks_in_flight,
+)
 from ..epub.service import (
     save_images,
     extract_images_epub,
@@ -30,6 +40,14 @@ from ..core.redis.redis import redis_server_dev
 
 
 r = redis_server_dev()
+
+
+# Ce module est aussi importé par l'API (pour .kiq) : le setup ne doit donc
+# pas être fait à l'import, sinon il s'exécuterait dans le processus API avec
+# le mauvais service.name. WORKER_STARTUP ne se déclenche que dans le worker.
+@broker.on_event(TaskiqEvents.WORKER_STARTUP)
+async def init_observability(state):
+    setup_observability("desc-image-worker")
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)
@@ -63,10 +81,15 @@ async def recover_stuck_tasks(state):
 
 @broker.task(retry_on_error=True, max_retries=3)
 async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, epub_id: int):
+    started = time.monotonic()
+    # Nombre d'EPUB traités en parallèle dans le worker : décrément garanti en
+    # finally même en cas d'échec/retry, pour que la jauge ne dérive pas.
+    worker_tasks_in_flight.add(1)
     try:
         async with async_session() as session:
             await update_task_status(session, db_task_id, "in_progress")
-            image_paths, temp_folder = extract_images_epub(epub_path)
+            with tracer.start_as_current_span("extract_images_epub"):
+                image_paths, temp_folder = extract_images_epub(epub_path)
             images = await save_images(session, db_task_id, epub_id, image_paths)
 
             img_list = []
@@ -77,6 +100,7 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
 
             total_images = len(img_list)
             await set_total_images(session, db_task_id, total_images)
+            epub_images_per_file.record(total_images)
 
             result_models = await session.execute(
                 select(ModelsIA).where(
@@ -156,6 +180,8 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                 )
 
             await update_task_status(session, db_task_id, "completed")
+            task_counter.add(1, {"status": "completed"})
+            task_duration.record(time.monotonic() - started, {"status": "completed"})
             r.set(
                 task_id,
                 json.dumps(
@@ -183,7 +209,11 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
 
     except Exception as e:
         logger.exception("Erreur lors du traitement de la tâche %s", task_id)
+        task_counter.add(1, {"status": "failed"})
+        task_duration.record(time.monotonic() - started, {"status": "failed"})
         async with async_session() as session:
             await update_task_status(session, db_task_id, "failed")
         r.set(task_id, json.dumps({"error": str(e)}, ensure_ascii=False))
         raise
+    finally:
+        worker_tasks_in_flight.add(-1)

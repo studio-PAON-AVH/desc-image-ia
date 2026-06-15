@@ -57,7 +57,7 @@ class ServiceUnavailableError(AppException):
 class FileTooLargeError(AppException):
     """Fichier trop volumineux (413)."""
 
-    def __init__(self, max_size_mb: int = 50):
+    def __init__(self, max_size_mb: int = 100):
         super().__init__(f"Fichier trop volumineux (max {max_size_mb} Mo)", "FILE_TOO_LARGE")
 
 

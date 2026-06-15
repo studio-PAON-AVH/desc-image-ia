@@ -14,6 +14,13 @@ from dotenv import load_dotenv
 from ebooklib import epub
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database.config import Images
+from ..core.observability.metric import (
+    ai_call_duration,
+    ai_call_errors,
+    ai_call_waiting,
+    ai_call_in_flight,
+    ai_call_wait,
+)
 from .repository import (
     create_task,
     create_epub,
@@ -117,8 +124,35 @@ async def stream_image_describe(images: List[str]):
     sems = _get_model_semaphores()
 
     async def wrapped(batch_idx, model_key, url, batch):
-        async with sems[model_key]:
-            result = await call(url, batch)
+        attrs = {"model": model_key}
+        # +1 dès l'entrée dans la file : ai_call_waiting reflète les requêtes
+        # bloquées sur le sémaphore — le vrai backlog, invisible côté queue Redis.
+        wait_start = time.monotonic()
+        ai_call_waiting.add(1, attrs)
+        acquired = False
+        try:
+            await sems[model_key].acquire()
+            acquired = True
+            ai_call_waiting.add(-1, attrs)
+            # Temps passé en file avant d'acquérir : la latence cachée.
+            ai_call_wait.record(time.monotonic() - wait_start, attrs)
+            ai_call_in_flight.add(1, attrs)
+            try:
+                # Chrono démarré après le sémaphore : on mesure la latence réelle
+                # du modèle, pas le temps d'attente dans la file.
+                call_start = time.monotonic()
+                result = await call(url, batch)
+                ai_call_duration.record(time.monotonic() - call_start, attrs)
+                if result.get("success") is False:
+                    ai_call_errors.add(1, attrs)
+            finally:
+                ai_call_in_flight.add(-1, attrs)
+                sems[model_key].release()
+        finally:
+            # Annulé/erreur avant d'acquérir le sémaphore : rééquilibrer la jauge
+            # pour qu'elle ne dérive pas.
+            if not acquired:
+                ai_call_waiting.add(-1, attrs)
         return {
             "batch_idx": batch_idx,
             "model_key": model_key,

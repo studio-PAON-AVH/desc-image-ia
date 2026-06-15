@@ -10,6 +10,8 @@ RUN npm run build
 FROM python:3.12.13-slim-bookworm
 WORKDIR /app
 
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 ENV POETRY_VERSION=2.4.1 \
     POETRY_VIRTUALENVS_CREATE=false \
     POETRY_NO_INTERACTION=1
