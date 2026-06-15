@@ -1,7 +1,7 @@
 name: Build
 
 # Déclenché automatiquement après la fin du workflow CI.
-# Les builds ne tournent que si la CI a réussi ET sur main/dev uniquement.
+# Les builds ne tournent que si la CI a réussi ET sur main/develop uniquement.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'dev')
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop')
     permissions:
       contents: read
       pull-requests: read
@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'dev')
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop')
     outputs:
       owner: ${{ steps.tag.outputs.owner }}
       tag: ${{ steps.tag.outputs.tag }}
@@ -90,7 +90,7 @@ jobs:
           SHORT_SHA="${HEAD_SHA::7}"
           if [ "$HEAD_BRANCH" = "main" ]; then
             echo "tag=latest" >> "$GITHUB_OUTPUT"
-          elif [ "$HEAD_BRANCH" = "dev" ]; then
+          elif [ "$HEAD_BRANCH" = "develop" ]; then
             echo "tag=dev-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           else
             SAFE_TAG=$(echo "$HEAD_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g' | tr '[:upper:]' '[:lower:]')
@@ -102,7 +102,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'dev')
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop')
     services:
       postgres:
         image: postgres:16
@@ -204,7 +204,7 @@ jobs:
           cache-to: type=gha,scope=postgresql,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/postgres:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/postgres:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/postgres:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
 
   build-redis:
     name: Build Redis
@@ -238,7 +238,7 @@ jobs:
           cache-to: type=gha,scope=redis,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/redis:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/redis:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/redis:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
 
   build-salesforce:
     name: Build Salesforce
@@ -273,7 +273,7 @@ jobs:
           cache-to: type=gha,scope=model1,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/model-blip:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/model-blip:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-blip:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
 
   build-florence2:
     name: Build Florence2
@@ -308,7 +308,7 @@ jobs:
           cache-to: type=gha,scope=model2,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/model-florence:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/model-florence:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-florence:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
 
   build-git:
     name: Build GIT-Large
@@ -343,7 +343,7 @@ jobs:
           cache-to: type=gha,scope=model3,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/model-git:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/model-git:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-git:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
 
   build-fastapi:
     name: Build FastAPI
@@ -378,7 +378,7 @@ jobs:
           cache-to: type=gha,scope=fastapi,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/backend:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/backend:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/backend:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
 
   build-worker:
     name: Build Worker
@@ -413,4 +413,4 @@ jobs:
           cache-to: type=gha,scope=worker,mode=max
           tags: |
             ghcr.io/${{ needs.prepare.outputs.owner }}/worker:${{ needs.prepare.outputs.tag }}
-            ghcr.io/${{ needs.prepare.outputs.owner }}/worker:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/worker:${{ github.event.workflow_run.head_branch == 'develop' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' }}
