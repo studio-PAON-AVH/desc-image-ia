@@ -1,0 +1,45 @@
+name: Deploy Dev
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-dev:
+    name: Deploy to dev
+    runs-on: ubuntu-latest
+    if: ${{ github.ref_name == 'develop' }}
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup SSH
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$PROD_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.PROD_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Test SSH verbose
+        run: |
+          ssh -vvv -o BatchMode=yes ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} 'echo OK' || true
+      - name: Copy Docker Compose file
+        run: |
+          ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} 'mkdir -p /opt/desc-image-ia-dev'
+          scp docker-compose.dev.yml .env.example \
+            ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }}:/opt/desc-image-ia-dev/
+          scp -r backend/core/observability/grafana \
+            ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }}:/opt/desc-image-ia-dev/
+      - name: Pull + restart
+        env:
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+        run: |
+          # Au premier déploiement, .env est créé depuis .env.example (à compléter
+          # ensuite à la main sur le serveur). Les runs suivants ne l'écrasent pas.
+          printf '%s' "$GHCR_PAT" | ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} \
+            'docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && \
+             cd /opt/desc-image-ia-dev && \
+             { [ -f .env ] || cp .env.example .env; } && \
+             docker compose --env-file .env -f docker-compose.dev.yml pull && \
+             docker compose --env-file .env -f docker-compose.dev.yml up -d --remove-orphans'
