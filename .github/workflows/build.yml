@@ -89,53 +89,6 @@ jobs:
           name: coverage-integration-report
           path: coverage.xml
 
-  changes:
-    name: Detect changes
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      postgresql: ${{ steps.filter.outputs.postgresql }}
-      redis: ${{ steps.filter.outputs.redis }}
-      model1: ${{ steps.filter.outputs.model1 }}
-      model2: ${{ steps.filter.outputs.model2 }}
-      model3: ${{ steps.filter.outputs.model3 }}
-      backend: ${{ steps.filter.outputs.backend }}
-      worker: ${{ steps.filter.outputs.worker }}
-    steps:
-      - uses: actions/checkout@v4
-
-      # Sans `base`/`ref`, paths-filter auto-détecte : la base de la PR sur
-      # pull_request, et la plage poussée (event.before) sur push.
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            postgresql:
-              - 'backend/core/database/**'
-            redis:
-              - 'backend/redis/**'
-            model1:
-              - 'backend/models/model1/**'
-            model2:
-              - 'backend/models/model2/**'
-            model3:
-              - 'backend/models/model3/**'
-            backend:
-              - 'backend/**'
-              - 'frontend/**'
-              - 'pyproject.toml'
-              - '!backend/worker/**'
-              - '!backend/models/**'
-            worker:
-              - 'backend/worker/**'
-              - 'backend/core/**'
-              - 'backend/epub/**'
-              - 'backend/middlewares/**'
-              - 'backend/utils.py'
-              - 'pyproject.toml'
-
   prepare:
     name: Prepare image tag
     runs-on: ubuntu-latest
@@ -164,8 +117,7 @@ jobs:
   build-postgresql:
     name: Build PostgreSQL
     runs-on: ubuntu-latest
-    needs: [prepare, changes, test-integration]
-    if: needs.changes.outputs.postgresql == 'true'
+    needs: [prepare, test-integration]
     permissions:
       contents: read
       packages: write
@@ -197,8 +149,7 @@ jobs:
   build-redis:
     name: Build Redis
     runs-on: ubuntu-latest
-    needs: [prepare, changes, test-integration]
-    if: needs.changes.outputs.redis == 'true'
+    needs: [prepare, test-integration]
     permissions:
       contents: read
       packages: write
@@ -229,8 +180,7 @@ jobs:
   build-salesforce:
     name: Build Salesforce
     runs-on: ubuntu-latest
-    needs: [prepare, changes, test-integration]
-    if: needs.changes.outputs.model1 == 'true'
+    needs: [prepare, test-integration]
     permissions:
       contents: read
       packages: write
@@ -262,8 +212,7 @@ jobs:
   build-florence2:
     name: Build Florence2
     runs-on: ubuntu-latest
-    needs: [prepare, changes, test-integration]
-    if: needs.changes.outputs.model2 == 'true'
+    needs: [prepare, test-integration]
     permissions:
       contents: read
       packages: write
@@ -295,8 +244,7 @@ jobs:
   build-git:
     name: Build GIT-Large
     runs-on: ubuntu-latest
-    needs: [prepare, changes, test-integration]
-    if: needs.changes.outputs.model3 == 'true'
+    needs: [prepare, test-integration]
     permissions:
       contents: read
       packages: write
@@ -328,8 +276,7 @@ jobs:
   build-fastapi:
     name: Build FastAPI
     runs-on: ubuntu-latest
-    needs: [prepare, changes, test-integration]
-    if: needs.changes.outputs.backend == 'true'
+    needs: [prepare, test-integration]
     permissions:
       contents: read
       packages: write
@@ -361,8 +308,7 @@ jobs:
   build-worker:
     name: Build Worker
     runs-on: ubuntu-latest
-    needs: [prepare, changes, test-integration]
-    if: needs.changes.outputs.worker == 'true'
+    needs: [prepare, test-integration]
     permissions:
       contents: read
       packages: write
