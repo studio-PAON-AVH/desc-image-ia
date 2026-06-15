@@ -16,7 +16,7 @@ x-logging: &logging
 
 services:
   backend:
-    image: ghcr.io/yuta1409/backend:dev
+    image: ghcr.io/desc-image-ia/backend:dev
     container_name: container-dev-api
     restart: unless-stopped
     ports:
@@ -44,7 +44,7 @@ services:
     logging: *logging
 
   worker:
-    image: ghcr.io/yuta1409/worker:dev
+    image: ghcr.io/desc-image-ia/worker:dev
     container_name: container-dev-worker
     restart: unless-stopped
     env_file: .env
@@ -68,7 +68,7 @@ services:
     logging: *logging
 
   model-blip:
-    image: ghcr.io/yuta1409/model-blip:dev
+    image: ghcr.io/desc-image-ia/model-blip:dev
     container_name: container-dev-model-blip
     restart: unless-stopped
     expose: ["8000"]
@@ -87,7 +87,7 @@ services:
     logging: *logging
 
   model-florence:
-    image: ghcr.io/yuta1409/model-florence:dev
+    image: ghcr.io/desc-image-ia/model-florence:dev
     container_name: container-dev-model-florence
     restart: unless-stopped
     expose: ["8000"]
@@ -106,7 +106,7 @@ services:
     logging: *logging
 
   model-git:
-    image: ghcr.io/yuta1409/model-git:dev
+    image: ghcr.io/desc-image-ia/model-git:dev
     container_name: container-dev-model-git
     restart: unless-stopped
     expose: ["8000"]
@@ -125,7 +125,7 @@ services:
     logging: *logging
 
   postgres:
-    image: ghcr.io/yuta1409/postgres:dev
+    image: ghcr.io/desc-image-ia/postgres:dev
     container_name: container-dev-postgres
     restart: unless-stopped
     expose: ["5432"]
@@ -143,7 +143,7 @@ services:
     logging: *logging
 
   redis:
-    image: ghcr.io/yuta1409/redis:dev
+    image: ghcr.io/desc-image-ia/redis:dev
     container_name: container-dev-redis
     restart: unless-stopped
     expose: ["6379"]
