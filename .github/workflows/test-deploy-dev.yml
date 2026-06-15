@@ -1,8 +1,4 @@
 name: Deploy Dev
-
-# TEMPORAIRE (phase de test) : déclenché sur push vers develop, mais le
-# déploiement ne part que si le message de commit contient [deploy].
-# À rebasculer en `workflow_dispatch` une fois validé (+ fichier sur main).
 on:
   push:
     branches: [develop]
@@ -12,7 +8,7 @@ jobs:
     name: Deploy to dev
     runs-on: ubuntu-latest
     if: true
-    environment: production
+    environment: dev
     steps:
       - uses: actions/checkout@v4
       - name: Setup SSH
