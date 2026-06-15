@@ -1,0 +1,416 @@
+name: Build
+
+# Déclenché automatiquement après la fin du workflow CI.
+# Les builds ne tournent que si la CI a réussi ET sur main/dev uniquement.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: ${{ github.event.workflow_run.head_branch != 'main' }}
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'dev')
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      postgresql: ${{ steps.filter.outputs.postgresql }}
+      redis: ${{ steps.filter.outputs.redis }}
+      model1: ${{ steps.filter.outputs.model1 }}
+      model2: ${{ steps.filter.outputs.model2 }}
+      model3: ${{ steps.filter.outputs.model3 }}
+      backend: ${{ steps.filter.outputs.backend }}
+      worker: ${{ steps.filter.outputs.worker }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+
+      - name: Resolve parent commit
+        id: parent
+        run: echo "sha=$(git rev-parse HEAD~1)" >> "$GITHUB_OUTPUT"
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          base: ${{ steps.parent.outputs.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+          filters: |
+            postgresql:
+              - 'backend/core/database/**'
+            redis:
+              - 'backend/redis/**'
+            model1:
+              - 'backend/models/model1/**'
+            model2:
+              - 'backend/models/model2/**'
+            model3:
+              - 'backend/models/model3/**'
+            backend:
+              - 'backend/**'
+              - 'frontend/**'
+              - 'pyproject.toml'
+              - '!backend/worker/**'
+              - '!backend/models/**'
+            worker:
+              - 'backend/worker/**'
+              - 'backend/core/**'
+              - 'backend/epub/**'
+              - 'backend/middlewares/**'
+              - 'backend/utils.py'
+              - 'pyproject.toml'
+
+  prepare:
+    name: Prepare image tag
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'dev')
+    outputs:
+      owner: ${{ steps.tag.outputs.owner }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Set image tag
+        id: tag
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "owner=${OWNER}" >> "$GITHUB_OUTPUT"
+          SHORT_SHA="${HEAD_SHA::7}"
+          if [ "$HEAD_BRANCH" = "main" ]; then
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          elif [ "$HEAD_BRANCH" = "dev" ]; then
+            echo "tag=dev-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            SAFE_TAG=$(echo "$HEAD_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g' | tr '[:upper:]' '[:lower:]')
+            echo "tag=${SAFE_TAG}" >> "$GITHUB_OUTPUT"
+          fi
+
+  test-integration:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'dev')
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" pytest pytest-cov
+
+      - name: Run integration tests
+        env:
+          CI: "true"
+          USE_SERVICE_CONTAINERS: "true"
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+          REDIS_HOST: localhost
+          REDIS_PORT: "6379"
+          SECRET_KEY: test-secret-key-for-ci
+          ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+          REFRESH_TOKEN_EXPIRE_DAYS: "7"
+          UPLOAD_TEMP_DIR: /tmp
+          URL_SALESFORCE_CPU_LARGE: http://localhost:8001/describe
+          URL_FLORANCE_2_LARGE: http://localhost:8002/describe
+          URL_GIT_LARGE: http://localhost:8003/describe
+          BATCH_SIZE: "5"
+          BATCH_MAX: "50"
+        run: |
+          pytest backend/test/integration --cov=backend --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration-report
+          path: coverage.xml
+
+  build-postgresql:
+    name: Build PostgreSQL
+    runs-on: ubuntu-latest
+    needs: [prepare, changes, test-integration]
+    if: needs.changes.outputs.postgresql == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ github.workspace }}/backend/core/database
+          file: ${{ github.workspace }}/backend/core/database/Dockerfile
+          push: true
+          cache-from: type=gha,scope=postgresql
+          cache-to: type=gha,scope=postgresql,mode=max
+          tags: |
+            ghcr.io/${{ needs.prepare.outputs.owner }}/postgres:${{ needs.prepare.outputs.tag }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/postgres:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+
+  build-redis:
+    name: Build Redis
+    runs-on: ubuntu-latest
+    needs: [prepare, changes, test-integration]
+    if: needs.changes.outputs.redis == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ github.workspace }}/backend/redis
+          push: true
+          cache-from: type=gha,scope=redis
+          cache-to: type=gha,scope=redis,mode=max
+          tags: |
+            ghcr.io/${{ needs.prepare.outputs.owner }}/redis:${{ needs.prepare.outputs.tag }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/redis:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+
+  build-salesforce:
+    name: Build Salesforce
+    runs-on: ubuntu-latest
+    needs: [prepare, changes, test-integration]
+    if: needs.changes.outputs.model1 == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ github.workspace }}
+          file: backend/models/model1/Dockerfile
+          push: true
+          cache-from: type=gha,scope=model1
+          cache-to: type=gha,scope=model1,mode=max
+          tags: |
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-blip:${{ needs.prepare.outputs.tag }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-blip:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+
+  build-florence2:
+    name: Build Florence2
+    runs-on: ubuntu-latest
+    needs: [prepare, changes, test-integration]
+    if: needs.changes.outputs.model2 == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ github.workspace }}
+          file: backend/models/model2/Dockerfile
+          push: true
+          cache-from: type=gha,scope=model2
+          cache-to: type=gha,scope=model2,mode=max
+          tags: |
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-florence:${{ needs.prepare.outputs.tag }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-florence:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+
+  build-git:
+    name: Build GIT-Large
+    runs-on: ubuntu-latest
+    needs: [prepare, changes, test-integration]
+    if: needs.changes.outputs.model3 == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ github.workspace }}
+          file: backend/models/model3/Dockerfile
+          push: true
+          cache-from: type=gha,scope=model3
+          cache-to: type=gha,scope=model3,mode=max
+          tags: |
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-git:${{ needs.prepare.outputs.tag }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/model-git:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+
+  build-fastapi:
+    name: Build FastAPI
+    runs-on: ubuntu-latest
+    needs: [prepare, changes, test-integration]
+    if: needs.changes.outputs.backend == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push FastAPI
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ github.workspace }}
+          file: backend/Dockerfile
+          push: true
+          cache-from: type=gha,scope=fastapi
+          cache-to: type=gha,scope=fastapi,mode=max
+          tags: |
+            ghcr.io/${{ needs.prepare.outputs.owner }}/backend:${{ needs.prepare.outputs.tag }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/backend:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}
+
+  build-worker:
+    name: Build Worker
+    runs-on: ubuntu-latest
+    needs: [prepare, changes, test-integration]
+    if: needs.changes.outputs.worker == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push Worker
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ github.workspace }}
+          file: backend/worker/Dockerfile
+          push: true
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker,mode=max
+          tags: |
+            ghcr.io/${{ needs.prepare.outputs.owner }}/worker:${{ needs.prepare.outputs.tag }}
+            ghcr.io/${{ needs.prepare.outputs.owner }}/worker:${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'main' && 'latest' || needs.prepare.outputs.owner }}

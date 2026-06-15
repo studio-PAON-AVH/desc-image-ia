@@ -136,6 +136,19 @@ services:
       retries: 5
       start_period: 90s
 
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: lgtm
+    ports:
+      - "3001:3000" # UI Grafana (3000 hôte déjà pris par frontend-react)
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    restart: unless-stopped
+    volumes:
+      - lgtm_data:/data
+      - ./backend/core/observability/grafana/provisioning/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/desc-image-ia.yaml:ro
+      - ./backend/core/observability/grafana/dashboards:/otel-lgtm/grafana/dashboards:ro
+
   fastapi:
     build:
       context: .
@@ -144,6 +157,9 @@ services:
       - "8000:8000"
     environment:
       APP_ENV: .env
+      SERVE_FRONTEND: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
       REDIS_URL: redis://redis:6379/1
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -183,6 +199,8 @@ services:
     restart: unless-stopped
     environment:
       APP_ENV: .env
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
       REDIS_URL: redis://redis:6379/1
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -210,33 +228,8 @@ services:
       git_large:
         condition: service_healthy
 
-  frontend-react:
-    build:
-      context: ./frontend
-      target: runner
-      args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-    container_name: frontend-react
-    ports:
-      - "3000:8080"
-    restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /run
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    depends_on:
-      fastapi:
-        condition: service_healthy
-
 volumes:
   epub_shared:
   postgres_data:
   redis_data:
+  lgtm_data:
