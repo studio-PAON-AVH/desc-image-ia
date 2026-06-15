@@ -1,13 +1,17 @@
 name: Deploy Dev
 
+# TEMPORAIRE (phase de test) : déclenché sur push vers develop, mais le
+# déploiement ne part que si le message de commit contient [deploy].
+# À rebasculer en `workflow_dispatch` une fois validé (+ fichier sur main).
 on:
-  workflow_dispatch:
+  push:
+    branches: [develop]
 
 jobs:
   deploy-dev:
     name: Deploy to dev
     runs-on: ubuntu-latest
-    if: ${{ github.ref_name == 'develop' }}
+    if: true
     environment: production
     steps:
       - uses: actions/checkout@v4
