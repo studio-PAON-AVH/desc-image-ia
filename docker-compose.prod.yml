@@ -24,8 +24,8 @@ services:
     environment:
       SERVE_FRONTEND: "True"
       OTEL_SERVICE_NAME: desc-image-ia-backend
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
-      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_TRACES_SAMPLER: parentbased_traceidratio
       OTEL_TRACES_SAMPLER_ARG: "1.0"
     volumes:
@@ -48,8 +48,8 @@ services:
     env_file: .env
     environment:
       OTEL_SERVICE_NAME: desc-image-ia-worker
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
-      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_TRACES_SAMPLER: parentbased_traceidratio
       OTEL_TRACES_SAMPLER_ARG: "1.0"
     volumes:
