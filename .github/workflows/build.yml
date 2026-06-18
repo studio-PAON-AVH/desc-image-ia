@@ -169,8 +169,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ${{ github.workspace }}
-          file: backend/core/redis/Dockerfile
+          context: ${{ github.workspace }}/backend/core/redis
+          file: ${{ github.workspace }}/backend/core/redis/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=redis
           cache-to: type=gha,scope=redis,mode=max
