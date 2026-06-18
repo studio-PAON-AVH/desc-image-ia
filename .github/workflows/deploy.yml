@@ -1,0 +1,40 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup SSH
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$PROD_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.PROD_HOST }} >> ~/.ssh/known_hosts
+      - name: Test SSH verbose
+        run: |
+          ssh -vvv -o BatchMode=yes ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} 'echo OK' || true
+      - name: Copy production folder contents
+        run: |
+          ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} 'mkdir -p /opt/project_ia'
+          scp -r prod/. \
+            ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }}:/opt/project_ia/
+      - name: Pull + restart
+        env:
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+        run: |
+          # Le token est envoyé via le stdin de ssh, lu par `docker login
+          # --password-stdin` : il n'apparaît dans aucune liste de process ni dans les logs, ni en local ni sur le serveur.
+          printf '%s' "$GHCR_PAT" | ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} \
+            'docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && \
+             cd /opt/project_ia && \
+             docker compose --env-file .env -f docker-compose.prod.yml pull && \
+             docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans'

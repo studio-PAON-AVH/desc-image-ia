@@ -1,4 +1,5 @@
 import pytest
+import os
 from unittest.mock import AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
@@ -20,8 +21,8 @@ def client(mocker):
 class TestMainEndpoints:
     @pytest.mark.unit
     def test_root_returns_welcome_message(self, client):
-        """GET / retourne le message de bienvenue."""
-        response = client.get("/")
+        """GET /api retourne le message de bienvenue."""
+        response = client.get("/api")
 
         assert response.status_code == 200
         assert response.json() == {"message": "Bienvenue sur l'API de description d'images EPUB"}
@@ -46,9 +47,10 @@ class TestCORSMiddleware:
     @pytest.mark.unit
     def test_cors_allowed_origin(self, client):
         """Une origine autorisée reçoit le header CORS."""
-        response = client.get("/health", headers={"Origin": "http://localhost:5173"})
+        URL_FRONT = os.getenv("URL_FRONT")
+        response = client.get("/health", headers={"Origin": URL_FRONT})
 
-        assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+        assert response.headers.get("access-control-allow-origin") == URL_FRONT
 
     @pytest.mark.unit
     def test_cors_unknown_origin_not_allowed(self, client):

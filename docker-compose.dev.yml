@@ -1,0 +1,181 @@
+name: desc-image-ia-dev
+
+networks:
+  app-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  epub_shared:
+  lgtm_data:
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  backend:
+    image: ghcr.io/studio-paon-avh/backend:dev
+    container_name: container-dev-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: .env
+    environment:
+      SERVE_FRONTEND: "True"
+      OTEL_SERVICE_NAME: desc-image-ia-backend-dev
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+    volumes:
+      - epub_shared:/shared
+    mem_limit: 1g
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      lgtm:     { condition: service_started }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      start_period: 30s
+    networks: [app-net]
+    logging: *logging
+
+  worker:
+    image: ghcr.io/studio-paon-avh/worker:dev
+    container_name: container-dev-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      OTEL_SERVICE_NAME: desc-image-ia-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+    volumes:
+      - epub_shared:/shared
+    mem_limit: 1g
+    depends_on:
+      postgres:       { condition: service_healthy }
+      redis:          { condition: service_healthy }
+      lgtm:           { condition: service_started }
+      model-blip:     { condition: service_healthy }
+      model-florence: { condition: service_healthy }
+      model-git:      { condition: service_healthy }
+    networks: [app-net]
+    logging: *logging
+
+  model-blip:
+    image: ghcr.io/studio-paon-avh/model-blip:dev
+    container_name: container-dev-model-blip
+    restart: unless-stopped
+    expose: ["8000"]
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
+    mem_limit: 3500m
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 15s
+      start_period: 30s
+      retries: 5
+    networks: [app-net]
+    logging: *logging
+
+  model-florence:
+    image: ghcr.io/studio-paon-avh/model-florence:dev
+    container_name: container-dev-model-florence
+    restart: unless-stopped
+    expose: ["8000"]
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
+    mem_limit: 2500m
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 15s
+      start_period: 30s
+      retries: 5
+    networks: [app-net]
+    logging: *logging
+
+  model-git:
+    image: ghcr.io/studio-paon-avh/model-git:dev
+    container_name: container-dev-model-git
+    restart: unless-stopped
+    expose: ["8000"]
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
+    mem_limit: 3500m
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 15s
+      start_period: 30s
+      retries: 5
+    networks: [app-net]
+    logging: *logging
+
+  postgres:
+    image: ghcr.io/studio-paon-avh/postgres:dev
+    container_name: container-dev-postgres
+    restart: unless-stopped
+    expose: ["5432"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+    networks: [app-net]
+    logging: *logging
+
+  redis:
+    image: ghcr.io/studio-paon-avh/redis:dev
+    container_name: container-dev-redis
+    restart: unless-stopped
+    expose: ["6379"]
+    volumes:
+      - redis_data:/data
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+    networks: [app-net]
+    logging: *logging
+
+  # Stack d'observabilité tout-en-un : récepteur OTLP + Prometheus/Mimir (metrics)
+  # + Tempo (traces) + Loki (logs) + Grafana (UI). Reçoit en push OTLP depuis
+  # backend et worker (cf. OTEL_EXPORTER_OTLP_ENDPOINT). Même image et même
+  # provisioning de dashboards qu'en dev.
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: container-dev-lgtm
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"   # Grafana (proxifié par nginx sous /grafana/)
+    environment:
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SERVER_DOMAIN: ${DOMAIN}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+    volumes:
+      - lgtm_data:/data
+      # Provisioning des dashboards (provider + JSON), comme en dev.
+      - ./grafana/provisioning/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/desc-image-ia.yaml:ro
+      - ./grafana/dashboards:/otel-lgtm/grafana/dashboards:ro
+    mem_limit: 1g
+    networks: [app-net]
+    logging: *logging

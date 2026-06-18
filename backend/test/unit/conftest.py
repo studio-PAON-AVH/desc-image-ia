@@ -18,6 +18,7 @@ os.environ.setdefault("URL_SALESFORCE_CPU_LARGE", "http://localhost:8001/describ
 os.environ.setdefault("URL_FLORANCE_2_LARGE", "http://localhost:8002/describe")
 os.environ.setdefault("URL_GIT_LARGE", "http://localhost:8003/describe")
 os.environ.setdefault("FASTAPI_URL", "http://localhost:8000")
+os.environ.setdefault("URL_FRONT", "http://localhost:5173")
 os.environ.setdefault("DEBUG", "true")
 
 # Charge le .env réel — n'écrase pas les valeurs déjà définies ci-dessus.

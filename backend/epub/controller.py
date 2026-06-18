@@ -8,13 +8,14 @@ from fastapi.responses import FileResponse
 from .service import save_epub, save_task
 from .middleware import already_exists
 from ..auth.middleware import get_current_user
+from ..core.observability.metric import epub_upload_counter, epub_upload_size
 from ..core.redis.redis import redis_server_dev
 from ..core.database.config import get_session, AsyncSession, User
 from ..worker.worker import process_epub_describe
 
 r = redis_server_dev()
 
-MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 Mo
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 Mo
 EPUB_MAGIC_BYTES = b"PK\x03\x04"
 
 
@@ -24,24 +25,31 @@ async def upload_epub(
     session: AsyncSession = Depends(get_session),
 ):
     if not upload.filename.endswith(".epub"):
+        epub_upload_counter.add(1, {"status": "rejected", "reason": "extension"})
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Le fichier doit être un .epub"
         )
 
     if await already_exists(upload.filename, session):
+        epub_upload_counter.add(1, {"status": "rejected", "reason": "duplicate"})
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce fichier existe déjà")
 
     content = await upload.read()
     if len(content) > MAX_UPLOAD_SIZE:
+        epub_upload_counter.add(1, {"status": "rejected", "reason": "too_large"})
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Fichier trop volumineux (max 50 Mo)",
+            detail="Fichier trop volumineux (max 100 Mo)",
         )
 
     if not content.startswith(EPUB_MAGIC_BYTES):
+        epub_upload_counter.add(1, {"status": "rejected", "reason": "invalid_format"})
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Le fichier n'est pas un EPUB valide"
         )
+
+    epub_upload_counter.add(1, {"status": "accepted"})
+    epub_upload_size.record(len(content))
 
     temp_dir = os.getenv("UPLOAD_TEMP_DIR", tempfile.gettempdir())
     tmp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".epub", dir=temp_dir).name
