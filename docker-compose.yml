@@ -23,7 +23,7 @@ services:
 
   redis:
     build:
-      context: ./backend/redis
+      context: ./backend/core/redis
     ports:
       - "6379:6379"
     restart: unless-stopped

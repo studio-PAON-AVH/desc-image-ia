@@ -71,14 +71,3 @@ def health_check():
 
 if SERVE_FRONTEND and os.path.isdir(FRONTEND_DIR):
     app.mount("/", SPAStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")  
-    
-    
-# TODO
-# les modeles font bien les traitement cepndant le probleme retourner est que le model 1 va finir epub1 avant de commencer epub2
-# les modeles aillant finit epub1 commence epub2 sans attendre les autres
-
-# WARNING
-# Plusieurs WORKER par modeles est different de un worker pour tout
-
-# SOLUTION A VOR
-# Soit creer plusieurs worker par modele pour qu'il puisse separer les differents tache ou juste plusieurs worker qui envoie vers les modeles
