@@ -36,5 +36,6 @@ jobs:
           printf '%s' "$GHCR_PAT" | ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} \
             'docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && \
              cd /opt/desc-image-ia && \
+             { [ -f .env ] || cp .env.prod .env; } && \
              docker compose --env-file .env -f docker-compose.prod.yml pull && \
              docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans'
