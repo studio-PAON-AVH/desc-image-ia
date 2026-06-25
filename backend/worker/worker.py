@@ -32,6 +32,7 @@ from ..epub.service import (
     update_task_status,
 )
 from ..core.database.config import async_session, Task, Epub, ModelsIA
+from ..core.storage import storage_minio
 
 MODEL_SALESFORCE = "Salesforce BLIP"
 MODEL_FLORENCE = "Florence-2"
@@ -91,6 +92,13 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
             with tracer.start_as_current_span("extract_images_epub"):
                 image_paths, temp_folder = extract_images_epub(epub_path)
             images = await save_images(session, db_task_id, epub_id, image_paths)
+            epub_record = await session.get(Epub, epub_id)
+            storage_minio(
+                epub_path=epub_path, 
+                list_images_paths=image_paths, 
+                tmp=temp_folder, 
+                file_name=epub_record.file_name
+            )
 
             img_list = []
             for img_path in image_paths:

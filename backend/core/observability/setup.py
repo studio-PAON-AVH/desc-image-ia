@@ -14,9 +14,6 @@ import os
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
@@ -34,6 +31,26 @@ def _enabled() -> bool:
     if os.getenv("OTEL_SDK_DISABLED", "").strip().lower() == "true":
         return False
     return bool(os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+
+
+def _exporters():
+    """Sélectionne les exporters OTLP selon OTEL_EXPORTER_OTLP_PROTOCOL.
+
+    grpc (défaut, endpoint :4317) en prod/Docker. En dev local avec
+    uvicorn --reload, gRPC crache des warnings au fork ("skipping fork()
+    handlers") : mettre OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf (endpoint
+    :4318) bascule sur l'export HTTP, sans thread gRPC, donc sans ce bruit.
+    """
+    protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").strip().lower()
+    if protocol in ("http/protobuf", "http/json", "http"):
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    else:
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    return OTLPSpanExporter, OTLPMetricExporter, OTLPLogExporter
 
 
 def setup_observability(service_name: str, app=None) -> None:
@@ -54,6 +71,7 @@ def setup_observability(service_name: str, app=None) -> None:
     _configured = True
 
     resource = Resource.create({"service.name": service_name})
+    OTLPSpanExporter, OTLPMetricExporter, OTLPLogExporter = _exporters()
 
     # Traces
     tracer_provider = TracerProvider(resource=resource)
