@@ -25,6 +25,7 @@ from .repository import (
     create_task,
     create_epub,
     create_images_batch,
+    set_images_storage as _repo_set_images_storage,
     create_image_descriptions_batch,
     save_image_descriptions_slice as _repo_save_image_descriptions_slice,
     set_task_total_images as _repo_set_task_total_images,
@@ -174,10 +175,11 @@ async def stream_image_describe(images: List[str]):
             logger.exception("Tâche de description interrompue: %s", e)
 
 
-async def get_image_describe(images: List[str]):
+async def get_image_describe(images: List[str], file_names: List[str] | None = None):
     """Variante non-streaming : draine stream_image_describe et agrège par image.
 
     Conservée pour describe_images_epub et la compatibilité ascendante.
+    `file_names` (optionnel) porte le nom d'origine de chaque image.
     """
     start = time.time()
     batch_size = _resolve_batch_size()
@@ -186,6 +188,7 @@ async def get_image_describe(images: List[str]):
     images_results = {
         f"image_{img_idx}": {
             "index": img_idx,
+            "file_name": file_names[img_idx] if file_names else None,
             "salesforce_blip": None,
             "florence2": None,
             "git_large": None,
@@ -221,7 +224,8 @@ async def describe_images_epub(epub_path: str):
                 img_bs64 = base64.b64encode(f.read()).decode("utf-8")
                 img_list.append(img_bs64)
 
-        return await get_image_describe(img_list)
+        file_names = [os.path.basename(p) for p in image_paths]
+        return await get_image_describe(img_list, file_names)
     finally:
         if temp_folder:
             try:
@@ -306,6 +310,12 @@ async def save_task(session: AsyncSession, task_id_redis: str, user_id: int):
 
 async def save_images(session: AsyncSession, task_id: int, epub_id: int, image_paths: List[str]):
     return await create_images_batch(session, task_id, epub_id, image_paths)
+
+
+async def save_images_storage(
+    session: AsyncSession, images: List[Images], bucket: str, object_keys: List[str]
+):
+    return await _repo_set_images_storage(session, images, bucket, object_keys)
 
 
 async def save_image_descriptions(

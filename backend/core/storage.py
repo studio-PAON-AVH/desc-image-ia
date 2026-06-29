@@ -129,25 +129,24 @@ def presigned_url(
     return client.presigned_get_object(
         bucket, object_name, expires=timedelta(hours=hours)
     )
+    
+def get_object_upstream(object:str, bucket: str):
+    client = get_client()
+    return client.get_object(bucket_name=bucket, object_name=object)
 
 def storage_minio(epub_path: str, list_images_paths: List[str], tmp: str, file_name: str):
     if not epub_path:
         print("Epub non trouvé")
-        return
+        return None, []
 
-    # `file_name` = nom d'origine de l'EPUB uploadé (ex: "Les Misérables.epub").
-    # On nomme le dossier MinIO d'après lui, et non d'après `epub_path` qui est
-    # le fichier temporaire (ex: "tmp1a2b3c.epub").
     name = epub_name(file_name, use_title=False)
     bucket = year_bucket()
     folder = _slugify(name)
     uploaded = upload_extracted_images(list_images_paths, prefix=folder, bucket=bucket)
 
-    for _, object_name in uploaded:
-        print("upload ok:", object_name)   # ex: collection-200-images/image_001.jpg
-        print("url:", presigned_url(object_name, bucket))
+    object_keys = [object_name for _, object_name in uploaded]
+    return bucket, object_keys
 
-    
 
 if __name__ == "__main__":
     try:

@@ -196,6 +196,9 @@ services:
       URL_GIT_LARGE: http://git_large:8000/describe
       BATCH_SIZE: ${BATCH_SIZE}
       BATCH_MAX: ${BATCH_MAX}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
     volumes:
       - epub_shared:/shared
     healthcheck:

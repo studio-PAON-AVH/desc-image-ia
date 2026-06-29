@@ -23,6 +23,7 @@ from ..core.observability.metric import (
 )
 from ..epub.service import (
     save_images,
+    save_images_storage,
     extract_images_epub,
     stream_image_describe,
     slice_to_image_descriptions,
@@ -93,12 +94,13 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                 image_paths, temp_folder = extract_images_epub(epub_path)
             images = await save_images(session, db_task_id, epub_id, image_paths)
             epub_record = await session.get(Epub, epub_id)
-            storage_minio(
-                epub_path=epub_path, 
-                list_images_paths=image_paths, 
-                tmp=temp_folder, 
+            bucket, object_keys = storage_minio(
+                epub_path=epub_path,
+                list_images_paths=image_paths,
+                tmp=temp_folder,
                 file_name=epub_record.file_name
             )
+            await save_images_storage(session, images, bucket, object_keys)
 
             img_list = []
             for img_path in image_paths:
@@ -122,10 +124,13 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                 "git_large": models.get(MODEL_GIT),
             }
 
-            # Structure partielle, miroir de la sortie de get_image_describe
+            # Structure partielle, miroir de la sortie de get_image_describe.
+            # On embarque le vrai nom de fichier (issu de l'EPUB) pour que le
+            # front puisse l'afficher au lieu d'un index synthétique.
             partial = {
                 f"image_{i}": {
                     "index": i,
+                    "file_name": os.path.basename(image_paths[i]),
                     "salesforce_blip": None,
                     "florence2": None,
                     "git_large": None,
