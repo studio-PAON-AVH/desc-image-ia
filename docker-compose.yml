@@ -1,5 +1,24 @@
 services:
 
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
   postgresql:
     build:
       context: ./backend/core/database
@@ -177,6 +196,9 @@ services:
       URL_GIT_LARGE: http://git_large:8000/describe
       BATCH_SIZE: ${BATCH_SIZE}
       BATCH_MAX: ${BATCH_MAX}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
     volumes:
       - epub_shared:/shared
     healthcheck:
@@ -214,12 +236,17 @@ services:
       URL_GIT_LARGE: http://git_large:8000/describe
       BATCH_SIZE: ${BATCH_SIZE}
       BATCH_MAX: ${BATCH_MAX}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
     volumes:
       - epub_shared:/shared
     depends_on:
       postgresql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
       saleforce_cpu_large:
         condition: service_healthy
@@ -233,3 +260,4 @@ volumes:
   postgres_data:
   redis_data:
   lgtm_data:
+  minio_data:

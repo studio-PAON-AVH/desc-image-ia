@@ -51,12 +51,14 @@ class TestEpubService:
             assert "time" in result
             assert result["images"]["image_0"].keys() == {
                 "index",
+                "file_name",
                 "salesforce_blip",
                 "florence2",
                 "git_large",
             }
             assert result["images"]["image_1"].keys() == {
                 "index",
+                "file_name",
                 "salesforce_blip",
                 "florence2",
                 "git_large",

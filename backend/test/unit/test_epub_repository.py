@@ -1,6 +1,6 @@
 # tests/test_epub_repository.py
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 
 class TestCreateTask:
@@ -9,7 +9,7 @@ class TestCreateTask:
     async def test_creates_task_with_pending_status(self, mock_session):
         from backend.epub.repository import create_task
 
-        result = await create_task(mock_session, "redis-uuid-1", user_id=7)
+        await create_task(mock_session, "redis-uuid-1", user_id=7)
 
         mock_session.add.assert_called_once()
         added = mock_session.add.call_args[0][0]

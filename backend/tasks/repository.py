@@ -36,6 +36,18 @@ async def find_images_by_task(session: AsyncSession, task_id: int) -> List[Image
     return result.scalars().all()
 
 
+async def find_image_by_position(
+    session: AsyncSession, task_id: int, position: int
+) -> Images | None:
+    result = await session.execute(
+        select(Images).where(
+            Images.task_id == task_id,
+            Images.image_position_in_epub == position,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def find_all_models(session: AsyncSession) -> List[ModelsIA]:
     result = await session.execute(select(ModelsIA))
     return result.scalars().all()

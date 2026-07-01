@@ -1,6 +1,4 @@
 # tests/test_settings.py
-import os
-import pytest
 from backend.core.settings import _env_file
 
 

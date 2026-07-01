@@ -13,7 +13,7 @@ async def get_validated_description(session: AsyncSession, task_id_redis: str) -
         .join(DescriptionFinale, DescriptionFinale.image_id == Images.id)
         .where(
             Task.task_id_redis == task_id_redis,
-            (DescriptionFinale.validated_by_human == True),
+            DescriptionFinale.validated_by_human
         )
     )
 

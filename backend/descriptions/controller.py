@@ -3,16 +3,18 @@ import logging
 import os
 import tempfile
 from fastapi import HTTPException, Depends, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Annotated
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from ..core.database.config import get_session, AsyncSession, User, Task
 from ..tasks.service import (
-    validate_task_descriptions, 
-    get_task_descriptions
+    validate_task_descriptions,
+    get_task_descriptions,
+    get_image_location,
 )
+from ..core.storage import get_object_upstream, _content_type
 from .service import add_descriptions
 from ..auth.middleware import get_current_user
 from ..core.redis.redis import redis_server_dev
@@ -87,6 +89,44 @@ async def get_descriptions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur lors de la récupération des descriptions",
         ) from e
+
+
+async def get_image(
+    task_id: str,
+    index: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: AsyncSession = Depends(get_session),
+):
+    # Vérifier que la tâche appartient à l'utilisateur
+    result = await session.execute(
+        select(Task).where(Task.task_id_redis == task_id, Task.user_id == current_user.id)
+    )
+    task = result.scalars().first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tâche non trouvée")
+
+    location = await get_image_location(session, task_id, index)
+    if location is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image non trouvée")
+
+    bucket, object_key = location
+    try:
+        obj = get_object_upstream(object_key, bucket)
+    except Exception as e:
+        logger.exception("Erreur lors de la récupération de l'image %s/%s", bucket, object_key)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur lors de la récupération de l'image",
+        ) from e
+
+    def iterfile():
+        try:
+            yield from obj.stream(32 * 1024)
+        finally:
+            obj.close()
+            obj.release_conn()
+
+    return StreamingResponse(iterfile(), media_type=_content_type(object_key))
 
 
 async def add_descriptions_to_epub(

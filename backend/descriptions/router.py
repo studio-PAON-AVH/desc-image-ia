@@ -1,5 +1,5 @@
 from fastapi import APIRouter, status, Depends
-from .controller import validate_descriptions, get_descriptions, add_descriptions_to_epub
+from .controller import validate_descriptions, get_descriptions, add_descriptions_to_epub, get_image
 from ..auth.middleware import get_current_user
 
 router = APIRouter()
@@ -7,6 +7,13 @@ router = APIRouter()
 router.add_api_route(
     "/{task_id}",
     get_descriptions,
+    dependencies=[Depends(get_current_user)],
+    methods=["GET"],
+    status_code=status.HTTP_200_OK,
+)
+router.add_api_route(
+    "/{task_id}/images/{index}",
+    get_image,
     dependencies=[Depends(get_current_user)],
     methods=["GET"],
     status_code=status.HTTP_200_OK,

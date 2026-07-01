@@ -115,6 +115,8 @@ class Images(Base):
     epub_id: Mapped[int] = mapped_column(Integer, ForeignKey("Epubs.id"))
     image_file_name: Mapped[str] = mapped_column(String(255))
     image_position_in_epub: Mapped[int] = mapped_column(Integer)
+    storage_bucket: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    storage_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[str] = mapped_column(TIMESTAMP)
     updated_at: Mapped[str] = mapped_column(TIMESTAMP)
     epub = relationship("Epub", back_populates="images", lazy="select")

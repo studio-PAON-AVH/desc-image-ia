@@ -309,6 +309,14 @@ class TestProcessEpubDescribe:
             )
             mock_rmtree = mocker.patch("backend.worker.worker.shutil.rmtree")
             mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake_image_bytes"))
+            mocker.patch(
+                "backend.worker.worker.storage_minio",
+                return_value=("bucket", ["key1", "key2"]),
+            )
+            mocker.patch(
+                "backend.worker.worker.save_images_storage", new_callable=AsyncMock
+            )
+            mock_session.get = AsyncMock(return_value=MagicMock(file_name="book.epub"))
 
             from backend.worker.worker import process_epub_describe
 
@@ -379,6 +387,14 @@ class TestProcessEpubDescribe:
             mocker.patch("backend.worker.worker.save_descriptions_slice", new_callable=AsyncMock)
             mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
             mocker.patch("builtins.open", mocker.mock_open(read_data=fake_img_bytes))
+            mocker.patch(
+                "backend.worker.worker.storage_minio",
+                return_value=("bucket", ["key1"]),
+            )
+            mocker.patch(
+                "backend.worker.worker.save_images_storage", new_callable=AsyncMock
+            )
+            mock_session.get = AsyncMock(return_value=MagicMock(file_name="book.epub"))
 
             from backend.worker.worker import process_epub_describe
 
@@ -427,6 +443,14 @@ class TestProcessEpubDescribe:
             mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
             mock_rmtree = mocker.patch("backend.worker.worker.shutil.rmtree")
             mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake"))
+            mocker.patch(
+                "backend.worker.worker.storage_minio",
+                return_value=("bucket", ["key1"]),
+            )
+            mocker.patch(
+                "backend.worker.worker.save_images_storage", new_callable=AsyncMock
+            )
+            mock_session.get = AsyncMock(return_value=MagicMock(file_name="book.epub"))
 
             from backend.worker.worker import process_epub_describe
 

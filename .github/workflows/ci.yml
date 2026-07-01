@@ -12,9 +12,8 @@ concurrency:
 
 jobs:
   lint:
-    name: Pylint
+    name: Ruff
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -26,19 +25,10 @@ jobs:
           cache-dependency-path: backend/pyproject.toml
 
       - name: Install dependencies
-        run: pip install pylint
+        run: pip install ruff
 
-      - name: Run pylint
-        run: |
-          pylint backend/ \
-            --ignore=migrations \
-            --output-format=json > pylint-report.json || true
-
-      - name: Upload pylint report
-        uses: actions/upload-artifact@v4
-        with:
-          name: pylint-report
-          path: pylint-report.json
+      - name: Run ruff
+        run: ruff check backend/ --exclude migrations
 
   test-unitaire:
     name: Run Unit Tests
