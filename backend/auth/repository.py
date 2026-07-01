@@ -56,7 +56,7 @@ async def find_valid_refresh_token(db: AsyncSession, token: str) -> RefreshToken
     result = await db.execute(
         select(RefreshToken).filter(
             RefreshToken.token == token,
-            RefreshToken.revoked == False,
+            RefreshToken.revoked,
             RefreshToken.expires_at > datetime.now(timezone.utc).replace(tzinfo=None),
         )
     )

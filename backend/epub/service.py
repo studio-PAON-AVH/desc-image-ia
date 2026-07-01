@@ -182,7 +182,6 @@ async def get_image_describe(images: List[str], file_names: List[str] | None = N
     `file_names` (optionnel) porte le nom d'origine de chaque image.
     """
     start = time.time()
-    batch_size = _resolve_batch_size()
     total_images = len(images)
 
     images_results = {

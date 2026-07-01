@@ -10,18 +10,15 @@ from opentelemetry import trace
 from sqlalchemy import select
 from taskiq import TaskiqEvents
 
-logger = logging.getLogger(__name__)
-tracer = trace.get_tracer(__name__)
-
-from ..broker import broker
-from ..core.observability.setup import setup_observability
-from ..core.observability.metric import (
+from backend.broker import broker
+from backend.core.observability.setup import setup_observability
+from backend.core.observability.metric import (
     epub_images_per_file,
     task_counter,
     task_duration,
     worker_tasks_in_flight,
 )
-from ..epub.service import (
+from backend.epub.service import (
     save_images,
     save_images_storage,
     extract_images_epub,
@@ -32,14 +29,16 @@ from ..epub.service import (
     set_processed_images,
     update_task_status,
 )
-from ..core.database.config import async_session, Task, Epub, ModelsIA
-from ..core.storage import storage_minio
+from backend.core.database.config import async_session, Task, Epub, ModelsIA
+from backend.core.storage import storage_minio
+from backend.core.redis.redis import redis_server_dev
+
+logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 MODEL_SALESFORCE = "Salesforce BLIP"
 MODEL_FLORENCE = "Florence-2"
 MODEL_GIT = "GIT Large"
-from ..core.redis.redis import redis_server_dev
-
 
 r = redis_server_dev()
 

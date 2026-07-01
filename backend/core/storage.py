@@ -4,13 +4,9 @@ import unicodedata
 from datetime import timedelta
 from typing import List, Optional, Tuple
 
-import ebooklib
 from ebooklib import epub
 from minio import Minio
 from minio.error import S3Error
-
-from ..epub.service import extract_images_epub
-
 
 def _slugify(value: str) -> str:
     """Translitère + nettoie une chaîne pour un usage S3 (minuscules, [a-z0-9-])."""

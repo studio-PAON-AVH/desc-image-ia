@@ -1,6 +1,5 @@
 import pytest
 import os
-import datetime
 
 from unittest.mock import AsyncMock, MagicMock
 import jwt
