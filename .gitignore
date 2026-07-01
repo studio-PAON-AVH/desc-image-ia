@@ -4,6 +4,7 @@ venv/
 .env
 .vscode/
 .coverage
+.ruff_cache/
 
 # Logs
 logs

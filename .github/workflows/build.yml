@@ -167,8 +167,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ${{ github.workspace }}/backend/core/storage
-          file: ${{ github.workspace }}/backend/core/storage/Dockerfile
+          context: ${{ github.workspace }}/backend/core
+          file: ${{ github.workspace }}/backend/core/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=minio
           cache-to: type=gha,scope=minio,mode=max
