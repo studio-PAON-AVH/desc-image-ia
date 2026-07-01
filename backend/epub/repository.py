@@ -59,6 +59,22 @@ async def create_images_batch(
     return images
 
 
+async def set_images_storage(
+    session: AsyncSession, images: List[Images], bucket: str, object_keys: List[str]
+) -> None:
+    """Associe à chaque image son emplacement MinIO (bucket + clé d'objet).
+
+    `images` et `object_keys` sont dans le même ordre (tous deux dérivés de la
+    même liste `image_paths`), donc on les apparie avec zip().
+    """
+    if not bucket:
+        return
+    for img, object_key in zip(images, object_keys):
+        img.storage_bucket = bucket
+        img.storage_object_key = object_key
+    await session.commit()
+
+
 async def create_image_descriptions_batch(
     session: AsyncSession,
     images: List[Images],

@@ -4,9 +4,23 @@ from .repository import (
     find_task_by_redis_id,
     find_images_with_descriptions,
     find_images_by_task,
+    find_image_by_position,
     find_all_models,
     upsert_final_description,
 )
+
+
+async def get_image_location(
+    session: AsyncSession, task_id_redis: str, index: int
+) -> tuple[str, str] | None:
+    """Retourne (bucket, object_key) de l'image à la position `index`, ou None."""
+    task = await find_task_by_redis_id(session, task_id_redis)
+    if not task:
+        return None
+    image = await find_image_by_position(session, task.id, index)
+    if not image or not image.storage_object_key or not image.storage_bucket:
+        return None
+    return image.storage_bucket, image.storage_object_key
 
 
 def _get_model_key(model_name: str) -> str | None:

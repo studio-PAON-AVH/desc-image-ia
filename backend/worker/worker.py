@@ -10,19 +10,17 @@ from opentelemetry import trace
 from sqlalchemy import select
 from taskiq import TaskiqEvents
 
-logger = logging.getLogger(__name__)
-tracer = trace.get_tracer(__name__)
-
-from ..broker import broker
-from ..core.observability.setup import setup_observability
-from ..core.observability.metric import (
+from backend.broker import broker
+from backend.core.observability.setup import setup_observability
+from backend.core.observability.metric import (
     epub_images_per_file,
     task_counter,
     task_duration,
     worker_tasks_in_flight,
 )
-from ..epub.service import (
+from backend.epub.service import (
     save_images,
+    save_images_storage,
     extract_images_epub,
     stream_image_describe,
     slice_to_image_descriptions,
@@ -31,13 +29,16 @@ from ..epub.service import (
     set_processed_images,
     update_task_status,
 )
-from ..core.database.config import async_session, Task, Epub, ModelsIA
+from backend.core.database.config import async_session, Task, Epub, ModelsIA
+from backend.core.storage import storage_minio
+from backend.core.redis.redis import redis_server_dev
+
+logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 MODEL_SALESFORCE = "Salesforce BLIP"
 MODEL_FLORENCE = "Florence-2"
 MODEL_GIT = "GIT Large"
-from ..core.redis.redis import redis_server_dev
-
 
 r = redis_server_dev()
 
@@ -91,6 +92,14 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
             with tracer.start_as_current_span("extract_images_epub"):
                 image_paths, temp_folder = extract_images_epub(epub_path)
             images = await save_images(session, db_task_id, epub_id, image_paths)
+            epub_record = await session.get(Epub, epub_id)
+            bucket, object_keys = storage_minio(
+                epub_path=epub_path,
+                list_images_paths=image_paths,
+                tmp=temp_folder,
+                file_name=epub_record.file_name
+            )
+            await save_images_storage(session, images, bucket, object_keys)
 
             img_list = []
             for img_path in image_paths:
@@ -114,10 +123,13 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                 "git_large": models.get(MODEL_GIT),
             }
 
-            # Structure partielle, miroir de la sortie de get_image_describe
+            # Structure partielle, miroir de la sortie de get_image_describe.
+            # On embarque le vrai nom de fichier (issu de l'EPUB) pour que le
+            # front puisse l'afficher au lieu d'un index synthétique.
             partial = {
                 f"image_{i}": {
                     "index": i,
+                    "file_name": os.path.basename(image_paths[i]),
                     "salesforce_blip": None,
                     "florence2": None,
                     "git_large": None,

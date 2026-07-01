@@ -40,6 +40,7 @@ export interface IDescriptionResponse { task_id: string; status: string; total_i
 export interface ITaskModelDescription { french_description?: string; description?: string; success?: boolean; error?: string; }
 export interface ITaskImageEntry {
   index: number;
+  file_name?: string | null;
   salesforce_blip: ITaskModelDescription | null;
   florence2: ITaskModelDescription | null;
   git_large: ITaskModelDescription | null;
