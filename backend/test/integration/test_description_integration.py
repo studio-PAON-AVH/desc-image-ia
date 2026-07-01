@@ -223,6 +223,7 @@ class TestDescriptionIntegration:
     ):
         """Un utilisateur ne peut pas voir les descriptions d'une tâche appartenant à un autre (404)."""
         # Créer le propriétaire et sa tâche
+        _register_and_login(client, "desc_owner@example.com", username="descowner")
         result = await async_session.execute(
             select(User).where(User.email == "desc_owner@example.com")
         )
@@ -324,6 +325,7 @@ class TestDescriptionIntegration:
 
     async def test_validate_descriptions_other_user_task_returns_404(self, client, async_session):
         """Un utilisateur ne peut pas valider les descriptions d'une tâche d'un autre → 404."""
+        _register_and_login(client, "desc_val_owner@example.com", username="descvalowner")
         result = await async_session.execute(
             select(User).where(User.email == "desc_val_owner@example.com")
         )
