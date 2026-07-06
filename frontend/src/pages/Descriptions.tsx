@@ -354,47 +354,41 @@ export function Descriptions() {
                 />
               </div>
               <div className="flex min-w-0 flex-1 flex-col gap-4">
-                {image.descriptions.length === 0 ? (
-                  <div className="flex items-center justify-center rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                    Génération des descriptions en cours…
-                  </div>
-                ) : (
-                  <div className="grid gap-3 md:grid-cols-1">
-                    {image.descriptions.map((desc, descIndex) => {
-                      const isSelected = state?.selectedDescriptionIndex === descIndex;
-                      return (
-                        <button
-                          key={desc.description_id}
-                          type="button"
-                          onClick={() => handleSelectDescription(imageIndex, descIndex)}
-                          className={`group/option flex flex-col gap-2 rounded-lg border p-3 text-left transition-all ${
-                            isSelected
-                              ? 'border-primary bg-primary/5 ring-2 ring-primary'
-                              : 'border-border hover:border-primary/50 hover:bg-muted/40'
-                          }`}
-                          aria-pressed={isSelected}
-                          aria-label={`Description par ${desc.model_name}: ${desc.description_text}`}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <Badge variant="outline" className="border-transparent bg-muted">
-                              {desc.model_name}
-                            </Badge>
-                            <span
-                              className={`flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors ${
-                                isSelected
-                                  ? 'border-primary bg-primary text-primary-foreground'
-                                  : 'border-border text-transparent group-hover/option:border-primary/50'
-                              }`}
-                            >
-                              <Check className="size-3" />
-                            </span>
-                          </div>
-                          <p className="text-sm leading-relaxed">{desc.description_text}</p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                <div className="grid gap-3 md:grid-cols-1">
+                  {image.descriptions.map((desc, descIndex) => {
+                    const isSelected = state?.selectedDescriptionIndex === descIndex;
+                    return (
+                      <button
+                        key={desc.description_id}
+                        type="button"
+                        onClick={() => handleSelectDescription(imageIndex, descIndex)}
+                        className={`group/option flex flex-col gap-2 rounded-lg border p-3 text-left transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/5 ring-2 ring-primary'
+                            : 'border-border hover:border-primary/50 hover:bg-muted/40'
+                        }`}
+                        aria-pressed={isSelected}
+                        aria-label={`Description par ${desc.model_name}: ${desc.description_text}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge variant="outline" className="border-transparent bg-muted">
+                            {desc.model_name}
+                          </Badge>
+                          <span
+                            className={`flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                              isSelected
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'border-border text-transparent group-hover/option:border-primary/50'
+                            }`}
+                          >
+                            <Check className="size-3" />
+                          </span>
+                        </div>
+                        <p className="text-sm leading-relaxed">{desc.description_text}</p>
+                      </button>
+                    );
+                  })}
+                </div>
 
                 <div className="space-y-2 border-t pt-4">
                   <Label
