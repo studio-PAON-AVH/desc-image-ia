@@ -1,5 +1,6 @@
 import json
 import pytest
+from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock
 
 
@@ -35,13 +36,21 @@ class TestGetTaskResult:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_in_progress_returns_partial(self, mocker):
-        payload = {
-            "status": "in_progress",
-            "total_images": 4,
-            "processed_images": 1,
-            "descriptions": {"images": {"image_0": {}}, "total_images": 4},
-        }
+        """processed_images vient du compteur Redis atomique, le contenu des
+        descriptions de la DB (via build_task_progress_payload) : il n'y a
+        plus de blob Redis agrégé à jour en continu depuis le passage en
+        multi-queue (chaque tâche modèle persiste directement en DB)."""
+        payload = {"status": "in_progress", "total_images": 4}
         controller = self._setup(mocker, payload)
+        progress_payload = {"images": {"image_0": {}}, "total_images": 4}
+        mocker.patch.object(
+            controller,
+            "build_task_progress_payload",
+            new=AsyncMock(return_value=progress_payload),
+        )
+        controller.redis_dev.get.side_effect = lambda key: (
+            json.dumps(payload).encode("utf-8") if key == "t1" else b"2"
+        )
         current_user = MagicMock(id=1)
 
         resp = await controller.get_task_result("t1", current_user, db=MagicMock())
@@ -49,21 +58,27 @@ class TestGetTaskResult:
         assert resp["completed"] is False
         assert resp["status"] == "in_progress"
         assert resp["total_images"] == 4
-        assert resp["processed_images"] == 1
-        assert resp["result"] == payload["descriptions"]
+        assert resp["processed_images"] == 2
+        assert resp["result"] == progress_payload
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_completed_returns_final(self, mocker):
-        payload = {"status": "completed", "total_images": 1, "descriptions": {"images": {}}}
+        payload = {"status": "completed", "total_images": 1}
         controller = self._setup(mocker, payload)
+        progress_payload = {"images": {}, "total_images": 1}
+        mocker.patch.object(
+            controller,
+            "build_task_progress_payload",
+            new=AsyncMock(return_value=progress_payload),
+        )
         current_user = MagicMock(id=1)
 
         resp = await controller.get_task_result("t1", current_user, db=MagicMock())
 
         assert resp["completed"] is True
         assert resp["status"] == "completed"
-        assert resp["result"] == payload
+        assert resp["result"] == progress_payload
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -76,6 +91,159 @@ class TestGetTaskResult:
 
         assert resp["completed"] is True
         assert resp["result"] == payload
+
+
+class TestCancelTaskEndpoint:
+    """Tests du controller cancel_task (POST /api/task/{task_id}/cancel)."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_not_found_returns_404(self, mocker):
+        from backend.tasks import controller
+
+        mocker.patch.object(controller, "find_task_by_redis_id", new=AsyncMock(return_value=None))
+        current_user = MagicMock(id=1)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await controller.cancel_task("t1", current_user, db=MagicMock())
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_wrong_owner_returns_403(self, mocker):
+        from backend.tasks import controller
+
+        task = MagicMock(user_id=2, status="pending")
+        mocker.patch.object(controller, "find_task_by_redis_id", new=AsyncMock(return_value=task))
+        current_user = MagicMock(id=1)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await controller.cancel_task("t1", current_user, db=MagicMock())
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_value", ["completed", "failed", "cancelled"])
+    async def test_already_terminal_returns_409(self, mocker, status_value):
+        from backend.tasks import controller
+
+        task = MagicMock(user_id=1, status=status_value)
+        mocker.patch.object(controller, "find_task_by_redis_id", new=AsyncMock(return_value=task))
+        current_user = MagicMock(id=1)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await controller.cancel_task("t1", current_user, db=MagicMock())
+        assert exc_info.value.status_code == 409
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_value", ["pending", "in_progress"])
+    async def test_cancellable_status_calls_service_and_returns_payload(self, mocker, status_value):
+        from backend.tasks import controller
+
+        task = MagicMock(user_id=1, status=status_value)
+        mocker.patch.object(controller, "find_task_by_redis_id", new=AsyncMock(return_value=task))
+        mock_cancel = mocker.patch.object(
+            controller, "_cancel_task_processing", new=AsyncMock()
+        )
+        current_user = MagicMock(id=1)
+        db = MagicMock()
+
+        result = await controller.cancel_task("t1", current_user, db=db)
+
+        mock_cancel.assert_called_once_with(db, controller.redis_dev, task)
+        assert result == {"task_id": "t1", "status": "cancelled"}
+
+
+class TestCancelTaskService:
+    """Tests du service cancel_task : annulation Redis + suppression Epub/MinIO/fichier."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_cancels_deletes_epub_and_cleans_storage(self, mocker, session):
+        from backend.tasks import service
+
+        task = MagicMock(id=5, task_id_redis="task-1")
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps({"epub_path": "/shared/book.epub"}).encode()
+
+        mock_mark_cancelled = mocker.patch.object(service, "mark_cancelled")
+        mock_update = mocker.patch.object(service, "_update_task_status", new=AsyncMock())
+        mock_delete = mocker.patch.object(
+            service,
+            "delete_epub_and_children",
+            new=AsyncMock(return_value=[("bucket", "key1"), ("bucket", "key2")]),
+        )
+        mock_remove_objects = mocker.patch.object(service, "remove_objects")
+        mocker.patch("os.path.exists", return_value=True)
+        mock_remove = mocker.patch("os.remove")
+
+        await service.cancel_task(session, mock_redis, task)
+
+        mock_mark_cancelled.assert_called_once_with(mock_redis, "task-1")
+        mock_update.assert_called_once_with(session, 5, "cancelled")
+        mock_delete.assert_called_once_with(session, 5)
+        mock_remove_objects.assert_called_once_with("bucket", ["key1", "key2"])
+        mock_remove.assert_called_once_with("/shared/book.epub")
+        final_payload = json.loads(mock_redis.set.call_args.args[1])
+        assert final_payload["status"] == "cancelled"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_missing_epub_file_on_disk_is_ignored(self, mocker, session):
+        from backend.tasks import service
+
+        task = MagicMock(id=5, task_id_redis="task-1")
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps({"epub_path": "/shared/book.epub"}).encode()
+
+        mocker.patch.object(service, "mark_cancelled")
+        mocker.patch.object(service, "_update_task_status", new=AsyncMock())
+        mocker.patch.object(service, "delete_epub_and_children", new=AsyncMock(return_value=[]))
+        mocker.patch.object(service, "remove_objects")
+        mocker.patch("os.path.exists", return_value=False)
+        mock_remove = mocker.patch("os.remove")
+
+        await service.cancel_task(session, mock_redis, task)
+
+        mock_remove.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_no_redis_payload_skips_file_deletion(self, mocker, session):
+        from backend.tasks import service
+
+        task = MagicMock(id=5, task_id_redis="task-1")
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+
+        mocker.patch.object(service, "mark_cancelled")
+        mocker.patch.object(service, "_update_task_status", new=AsyncMock())
+        mocker.patch.object(service, "delete_epub_and_children", new=AsyncMock(return_value=[]))
+        mocker.patch.object(service, "remove_objects")
+        mock_exists = mocker.patch("os.path.exists")
+
+        await service.cancel_task(session, mock_redis, task)
+
+        mock_exists.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_no_storage_locations_skips_remove_objects(self, mocker, session):
+        from backend.tasks import service
+
+        task = MagicMock(id=5, task_id_redis="task-1")
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+
+        mocker.patch.object(service, "mark_cancelled")
+        mocker.patch.object(service, "_update_task_status", new=AsyncMock())
+        mocker.patch.object(service, "delete_epub_and_children", new=AsyncMock(return_value=[]))
+        mock_remove_objects = mocker.patch.object(service, "remove_objects")
+
+        await service.cancel_task(session, mock_redis, task)
+
+        mock_remove_objects.assert_not_called()
 
 
 class TestTaskService:

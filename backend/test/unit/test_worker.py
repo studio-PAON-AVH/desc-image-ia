@@ -1,5 +1,6 @@
 import pytest
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 
@@ -9,29 +10,6 @@ def make_async_session_cm(session_mock):
     cm.__aenter__.return_value = session_mock
     cm.__aexit__.return_value = None
     return cm
-
-
-def make_stream(events):
-    """Construit un faux stream_image_describe yieldant les events donnés."""
-
-    async def fake_stream(img_list):
-        for evt in events:
-            yield evt
-
-    return fake_stream
-
-
-def describe_event(batch_idx, model_key, batch_size, total_images, french_descriptions):
-    """Fabrique un event tel que yieldé par stream_image_describe."""
-    return {
-        "batch_idx": batch_idx,
-        "model_key": model_key,
-        "batch_size": batch_size,
-        "total_images": total_images,
-        "result": {
-            "results": [{"french_description": fr} for fr in french_descriptions]
-        },
-    }
 
 
 class TestRecoverStuckTasks:
@@ -239,12 +217,83 @@ class TestRecoverStuckTasks:
             mock_kiq.assert_called_once_with("/path/to/file.epub", "redis-key-1", 1, 10)
 
 
+def _setup_process_epub_mocks(mocker, image_paths, temp_folder, fake_images, models=None):
+    """Mocke les dépendances communes de process_epub_describe (orchestrateur).
+
+    Fonction de module (pas une méthode) : les classes TestHappyPath /
+    TestErrorHandling sont imbriquées dans TestProcessEpubDescribe mais
+    n'héritent pas de ses méthodes (l'imbrication Python n'implique pas
+    l'héritage), donc `self._setup_common` n'y serait pas résolu.
+    """
+    mock_session = AsyncMock()
+    mock_models_result = MagicMock()
+    mock_models_result.scalars.return_value.all.return_value = models or []
+    mock_session.execute = AsyncMock(return_value=mock_models_result)
+
+    mocker.patch(
+        "backend.worker.worker.async_session",
+        return_value=make_async_session_cm(mock_session),
+    )
+    mock_redis = mocker.patch("backend.worker.worker.r")
+    mocker.patch(
+        "backend.worker.worker.extract_images_epub", return_value=(image_paths, temp_folder)
+    )
+    mock_save_images = mocker.patch(
+        "backend.worker.worker.save_images", new_callable=AsyncMock, return_value=fake_images
+    )
+    mock_set_total = mocker.patch(
+        "backend.worker.worker.set_total_images", new_callable=AsyncMock
+    )
+    mock_update = mocker.patch(
+        "backend.worker.worker.update_task_status", new_callable=AsyncMock
+    )
+    mock_rmtree = mocker.patch("backend.worker.worker.shutil.rmtree")
+    mocker.patch(
+        "backend.worker.worker.storage_minio",
+        return_value=("bucket", [f"key{i}" for i in range(len(image_paths))]),
+    )
+    mocker.patch("backend.worker.worker.save_images_storage", new_callable=AsyncMock)
+    mock_session.get = AsyncMock(return_value=MagicMock(file_name="book.epub"))
+
+    # Le fan-out indexe MODEL_BATCH_TASKS par clé modèle : on remplace le
+    # dict entier (plutôt que les noms individuels describe_batch_*) pour
+    # que le patch soit bien vu par process_epub_describe, et pour éviter
+    # tout .kiq() réel vers Redis dans les tests.
+    mock_model_tasks = {
+        key: MagicMock(kiq=AsyncMock()) for key in ("salesforce_blip", "florence2", "git_large")
+    }
+    mocker.patch("backend.worker.worker.MODEL_BATCH_TASKS", mock_model_tasks)
+
+    return {
+        "session": mock_session,
+        "redis": mock_redis,
+        "save_images": mock_save_images,
+        "set_total": mock_set_total,
+        "update": mock_update,
+        "rmtree": mock_rmtree,
+        "model_tasks": mock_model_tasks,
+    }
+
+
 class TestProcessEpubDescribe:
+    """process_epub_describe est désormais un orchestrateur : il extrait les
+    images, les sauvegarde (DB + MinIO) puis répartit ("fan-out") chaque
+    (batch, modèle) sur la queue taskiq dédiée à ce modèle. Il n'appelle plus
+    lui-même les modèles IA et ne bloque donc plus en attendant leur résultat.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _not_cancelled(self, mocker):
+        """Par défaut, aucune tâche n'est annulée : is_cancelled() est mockée
+        pour renvoyer False plutôt que de laisser tourner un MagicMock (qui
+        serait toujours truthy et déclencherait le chemin d'annulation)."""
+        return mocker.patch("backend.worker.worker.is_cancelled", return_value=False)
+
     class TestHappyPath:
         @pytest.mark.unit
         @pytest.mark.asyncio
-        async def test_full_pipeline_success(self, mocker):
-            """Test le pipeline complet : streaming, sauvegarde par slice, progression."""
+        async def test_fans_out_one_kiq_per_batch_and_model(self, mocker):
+            """Un batch de 2 images doit produire 2 * 3 (modèles) appels .kiq()."""
             epub_path = "/path/to/book.epub"
             task_id = "redis-key-abc"
             db_task_id = 42
@@ -252,157 +301,89 @@ class TestProcessEpubDescribe:
 
             image_paths = ["/tmp/img1.png", "/tmp/img2.png"]
             temp_folder = "/tmp/epub_extract"
-            fake_images = [MagicMock(), MagicMock()]
+            fake_image_1 = MagicMock(id=101)
+            fake_image_2 = MagicMock(id=102)
+            fake_images = [fake_image_1, fake_image_2]
 
-            # Un event par (batch, modèle) pour un batch de 2 images, 3 modèles.
-            events = [
-                describe_event(0, "salesforce_blip", 2, 2, ["a0", "a1"]),
-                describe_event(0, "florence2", 2, 2, ["b0", "b1"]),
-                describe_event(0, "git_large", 2, 2, ["c0", "c1"]),
-            ]
-
-            mock_session = AsyncMock()
-            mock_model_blip = MagicMock(name="blip")
+            mock_model_blip = MagicMock(name="Salesforce BLIP")
             mock_model_blip.name = "Salesforce BLIP"
             mock_model_blip.id = 1
-            mock_model_florence = MagicMock(name="florence")
+            mock_model_florence = MagicMock(name="Florence-2")
             mock_model_florence.name = "Florence-2"
             mock_model_florence.id = 2
-            mock_model_git = MagicMock(name="git")
+            mock_model_git = MagicMock(name="GIT Large")
             mock_model_git.name = "GIT Large"
             mock_model_git.id = 3
-            mock_models_result = MagicMock()
-            mock_models_result.scalars.return_value.all.return_value = [
-                mock_model_blip,
-                mock_model_florence,
-                mock_model_git,
-            ]
-            mock_session.execute = AsyncMock(return_value=mock_models_result)
 
-            mocker.patch(
-                "backend.worker.worker.async_session",
-                return_value=make_async_session_cm(mock_session),
+            mocks = _setup_process_epub_mocks(
+                mocker,
+                image_paths,
+                temp_folder,
+                fake_images,
+                models=[mock_model_blip, mock_model_florence, mock_model_git],
             )
-            mock_redis = mocker.patch("backend.worker.worker.r")
-            mocker.patch(
-                "backend.worker.worker.extract_images_epub", return_value=(image_paths, temp_folder)
-            )
-            mock_save_images = mocker.patch(
-                "backend.worker.worker.save_images",
-                new_callable=AsyncMock,
-                return_value=fake_images,
-            )
-            mocker.patch(
-                "backend.worker.worker.stream_image_describe", side_effect=make_stream(events)
-            )
-            mock_set_total = mocker.patch(
-                "backend.worker.worker.set_total_images", new_callable=AsyncMock
-            )
-            mock_set_processed = mocker.patch(
-                "backend.worker.worker.set_processed_images", new_callable=AsyncMock
-            )
-            mock_save_slice = mocker.patch(
-                "backend.worker.worker.save_descriptions_slice", new_callable=AsyncMock
-            )
-            mock_update = mocker.patch(
-                "backend.worker.worker.update_task_status", new_callable=AsyncMock
-            )
-            mock_rmtree = mocker.patch("backend.worker.worker.shutil.rmtree")
-            mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake_image_bytes"))
-            mocker.patch(
-                "backend.worker.worker.storage_minio",
-                return_value=("bucket", ["key1", "key2"]),
-            )
-            mocker.patch(
-                "backend.worker.worker.save_images_storage", new_callable=AsyncMock
-            )
-            mock_session.get = AsyncMock(return_value=MagicMock(file_name="book.epub"))
+            mocker.patch.dict(os.environ, {"BATCH_SIZE": "2"})
 
             from backend.worker.worker import process_epub_describe
 
             await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
-            mock_update.assert_any_call(mock_session, db_task_id, "in_progress")
-            mock_save_images.assert_called_once_with(mock_session, db_task_id, epub_id, image_paths)
-            mock_set_total.assert_called_once_with(mock_session, db_task_id, 2)
-            # Une sauvegarde par slice yieldé
-            assert mock_save_slice.call_count == len(events)
-            mock_update.assert_any_call(mock_session, db_task_id, "completed")
+            mocks["update"].assert_any_call(mocks["session"], db_task_id, "in_progress")
+            mocks["save_images"].assert_called_once_with(
+                mocks["session"], db_task_id, epub_id, image_paths
+            )
+            mocks["set_total"].assert_called_once_with(mocks["session"], db_task_id, 2)
+            # Un seul batch (BATCH_SIZE=2, 2 images) : 1 appel par modèle.
+            blip_kiq = mocks["model_tasks"]["salesforce_blip"].kiq
+            florence_kiq = mocks["model_tasks"]["florence2"].kiq
+            git_kiq = mocks["model_tasks"]["git_large"].kiq
+            blip_kiq.assert_called_once()
+            florence_kiq.assert_called_once()
+            git_kiq.assert_called_once()
 
-            # Plusieurs écritures Redis "in_progress" puis une finale "completed"
-            statuses = [
-                json.loads(c.args[1]).get("status") for c in mock_redis.set.call_args_list
+            call_args = blip_kiq.call_args.args
+            assert call_args[0] == task_id
+            assert call_args[1] == db_task_id
+            assert call_args[2] == "salesforce_blip"
+            assert call_args[3] == 1  # model_id résolu
+            assert call_args[4] == "bucket"
+            assert call_args[5] == [
+                {"image_id": 101, "object_key": "key0"},
+                {"image_id": 102, "object_key": "key1"},
             ]
-            assert "in_progress" in statuses
-            assert statuses[-1] == "completed"
+            assert call_args[6] == 2  # total_images
 
-            final_payload = json.loads(mock_redis.set.call_args_list[-1].args[1])
-            assert final_payload["epub_path"] == epub_path
-            assert final_payload["total_images"] == 2
-            assert final_payload["processed_images"] == 2
-            assert "descriptions" in final_payload
+            # Le dossier temporaire est nettoyé tout de suite après l'upload
+            # MinIO, sans attendre les tâches modèles.
+            mocks["rmtree"].assert_called_once_with(temp_folder)
 
-            # processed_images atteint 2 (toutes les images, tous les modèles vus)
-            assert mock_set_processed.call_args_list[-1].args[2] == 2
-            mock_rmtree.assert_called_once_with(temp_folder)
+            # La tâche n'est pas marquée "completed" par l'orchestrateur lui-même
+            # (c'est la dernière tâche modèle qui finalise, cf. model_tasks.py).
+            statuses = [c.args[2] for c in mocks["update"].call_args_list]
+            assert "completed" not in statuses
 
         @pytest.mark.unit
         @pytest.mark.asyncio
-        async def test_images_are_encoded_in_base64(self, mocker):
-            """Test que les images sont bien encodées en base64 avant l'appel aux modèles IA."""
-            import base64
-
+        async def test_no_images_marks_completed_immediately(self, mocker):
+            """EPUB sans image : rien à répartir, la tâche est déjà terminée."""
             epub_path = "/path/to/book.epub"
             task_id = "redis-key-abc"
             db_task_id = 42
             epub_id = 7
 
-            image_paths = ["/tmp/img1.png"]
-            fake_images = [MagicMock()]
-            fake_img_bytes = b"image_bytes"
-
-            mock_session = AsyncMock()
-            mock_models_result = MagicMock()
-            mock_models_result.scalars.return_value.all.return_value = []
-            mock_session.execute = AsyncMock(return_value=mock_models_result)
-
-            mocker.patch(
-                "backend.worker.worker.async_session",
-                return_value=make_async_session_cm(mock_session),
-            )
-            mocker.patch("backend.worker.worker.r")
-            mocker.patch(
-                "backend.worker.worker.extract_images_epub", return_value=(image_paths, None)
-            )
-            mocker.patch(
-                "backend.worker.worker.save_images",
-                new_callable=AsyncMock,
-                return_value=fake_images,
-            )
-            mock_stream = mocker.patch(
-                "backend.worker.worker.stream_image_describe", side_effect=make_stream([])
-            )
-            mocker.patch("backend.worker.worker.set_total_images", new_callable=AsyncMock)
-            mocker.patch("backend.worker.worker.set_processed_images", new_callable=AsyncMock)
-            mocker.patch("backend.worker.worker.save_descriptions_slice", new_callable=AsyncMock)
-            mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
-            mocker.patch("builtins.open", mocker.mock_open(read_data=fake_img_bytes))
-            mocker.patch(
-                "backend.worker.worker.storage_minio",
-                return_value=("bucket", ["key1"]),
-            )
-            mocker.patch(
-                "backend.worker.worker.save_images_storage", new_callable=AsyncMock
-            )
-            mock_session.get = AsyncMock(return_value=MagicMock(file_name="book.epub"))
+            mocks = _setup_process_epub_mocks(mocker, [], None, [])
 
             from backend.worker.worker import process_epub_describe
 
             await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
-            img_list_arg = mock_stream.call_args[0][0]
-            assert len(img_list_arg) == 1
-            assert img_list_arg[0] == base64.b64encode(fake_img_bytes).decode("utf-8")
+            mocks["update"].assert_any_call(mocks["session"], db_task_id, "completed")
+            for mock_task in mocks["model_tasks"].values():
+                mock_task.kiq.assert_not_called()
+
+            final_payload = json.loads(mocks["redis"].set.call_args_list[-1].args[1])
+            assert final_payload["status"] == "completed"
+            assert final_payload["total_images"] == 0
 
         @pytest.mark.unit
         @pytest.mark.asyncio
@@ -414,49 +395,43 @@ class TestProcessEpubDescribe:
             epub_id = 7
 
             image_paths = ["/tmp/img1.png"]
-            fake_images = [MagicMock()]
+            fake_images = [MagicMock(id=1)]
 
-            mock_session = AsyncMock()
-            mock_models_result = MagicMock()
-            mock_models_result.scalars.return_value.all.return_value = []
-            mock_session.execute = AsyncMock(return_value=mock_models_result)
-
-            mocker.patch(
-                "backend.worker.worker.async_session",
-                return_value=make_async_session_cm(mock_session),
-            )
-            mocker.patch("backend.worker.worker.r")
-            mocker.patch(
-                "backend.worker.worker.extract_images_epub", return_value=(image_paths, None)
-            )
-            mocker.patch(
-                "backend.worker.worker.save_images",
-                new_callable=AsyncMock,
-                return_value=fake_images,
-            )
-            mocker.patch(
-                "backend.worker.worker.stream_image_describe", side_effect=make_stream([])
-            )
-            mocker.patch("backend.worker.worker.set_total_images", new_callable=AsyncMock)
-            mocker.patch("backend.worker.worker.set_processed_images", new_callable=AsyncMock)
-            mocker.patch("backend.worker.worker.save_descriptions_slice", new_callable=AsyncMock)
-            mocker.patch("backend.worker.worker.update_task_status", new_callable=AsyncMock)
-            mock_rmtree = mocker.patch("backend.worker.worker.shutil.rmtree")
-            mocker.patch("builtins.open", mocker.mock_open(read_data=b"fake"))
-            mocker.patch(
-                "backend.worker.worker.storage_minio",
-                return_value=("bucket", ["key1"]),
-            )
-            mocker.patch(
-                "backend.worker.worker.save_images_storage", new_callable=AsyncMock
-            )
-            mock_session.get = AsyncMock(return_value=MagicMock(file_name="book.epub"))
+            mocks = _setup_process_epub_mocks(mocker, image_paths, None, fake_images)
 
             from backend.worker.worker import process_epub_describe
 
             await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
 
-            mock_rmtree.assert_not_called()
+            mocks["rmtree"].assert_not_called()
+
+        @pytest.mark.unit
+        @pytest.mark.asyncio
+        async def test_cancelled_before_extraction_stops_early(self, mocker, _not_cancelled):
+            """Si la tâche est déjà annulée, on ne fait ni extraction ni fan-out."""
+            epub_path = "/path/to/book.epub"
+            task_id = "redis-key-abc"
+            db_task_id = 42
+            epub_id = 7
+
+            _not_cancelled.return_value = True
+            mock_session = AsyncMock()
+            mocker.patch(
+                "backend.worker.worker.async_session",
+                return_value=make_async_session_cm(mock_session),
+            )
+            mocker.patch("backend.worker.worker.r")
+            mock_update = mocker.patch(
+                "backend.worker.worker.update_task_status", new_callable=AsyncMock
+            )
+            mock_extract = mocker.patch("backend.worker.worker.extract_images_epub")
+
+            from backend.worker.worker import process_epub_describe
+
+            await process_epub_describe(epub_path, task_id, db_task_id, epub_id)
+
+            mock_update.assert_any_call(mock_session, db_task_id, "cancelled")
+            mock_extract.assert_not_called()
 
     class TestErrorHandling:
         @pytest.mark.unit

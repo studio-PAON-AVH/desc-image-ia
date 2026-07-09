@@ -14,6 +14,20 @@ x-logging: &logging
   driver: json-file
   options: { max-size: "10m", max-file: "3" }
 
+x-worker-env: &worker-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  OTEL_TRACES_SAMPLER: parentbased_traceidratio
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+
+x-worker-depends-on: &worker-depends-on
+  postgres:       { condition: service_healthy }
+  redis:          { condition: service_healthy }
+  lgtm:           { condition: service_started }
+  model-blip:     { condition: service_healthy }
+  model-florence: { condition: service_healthy }
+  model-git:      { condition: service_healthy }
+
 services:
   backend:
     image: ghcr.io/studio-paon-avh/backend:dev
@@ -43,27 +57,72 @@ services:
     networks: [app-net]
     logging: *logging
 
+  # Orchestrateur : extraction epub + upload MinIO + fan-out vers les 3 queues
+  # modèles ci-dessous. N'appelle plus lui-même les modèles IA.
   worker:
     image: ghcr.io/studio-paon-avh/worker:dev
     container_name: container-dev-worker
     restart: unless-stopped
     env_file: .env
     environment:
+      <<: *worker-env
       OTEL_SERVICE_NAME: desc-image-ia-worker
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
-      OTEL_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_TRACES_SAMPLER: parentbased_traceidratio
-      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      TASKIQ_BROKER: backend.worker.worker:broker
     volumes:
       - epub_shared:/shared
     mem_limit: 1g
-    depends_on:
-      postgres:       { condition: service_healthy }
-      redis:          { condition: service_healthy }
-      lgtm:           { condition: service_started }
-      model-blip:     { condition: service_healthy }
-      model-florence: { condition: service_healthy }
-      model-git:      { condition: service_healthy }
+    depends_on: *worker-depends-on
+    networks: [app-net]
+    logging: *logging
+
+  # Un worker dédié par modèle, chacun ne consommant que sa propre queue
+  # taskiq (cf. backend/broker.py) : permet de scaler/redémarrer un modèle
+  # indépendamment des autres au lieu de tout concentrer dans un seul worker.
+  worker-salesforce:
+    image: ghcr.io/studio-paon-avh/worker:dev
+    container_name: container-dev-worker-salesforce
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *worker-env
+      OTEL_SERVICE_NAME: desc-image-ia-worker-salesforce
+      TASKIQ_BROKER: backend.worker.model_tasks:broker_salesforce
+    volumes:
+      - epub_shared:/shared
+    mem_limit: 512m
+    depends_on: *worker-depends-on
+    networks: [app-net]
+    logging: *logging
+
+  worker-florence2:
+    image: ghcr.io/studio-paon-avh/worker:dev
+    container_name: container-dev-worker-florence2
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *worker-env
+      OTEL_SERVICE_NAME: desc-image-ia-worker-florence2
+      TASKIQ_BROKER: backend.worker.model_tasks:broker_florence2
+    volumes:
+      - epub_shared:/shared
+    mem_limit: 512m
+    depends_on: *worker-depends-on
+    networks: [app-net]
+    logging: *logging
+
+  worker-git:
+    image: ghcr.io/studio-paon-avh/worker:dev
+    container_name: container-dev-worker-git
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *worker-env
+      OTEL_SERVICE_NAME: desc-image-ia-worker-git
+      TASKIQ_BROKER: backend.worker.model_tasks:broker_git
+    volumes:
+      - epub_shared:/shared
+    mem_limit: 512m
+    depends_on: *worker-depends-on
     networks: [app-net]
     logging: *logging
 
