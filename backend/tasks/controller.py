@@ -8,7 +8,13 @@ from ..core.database.config import User, get_session
 import json
 import logging
 from ..auth.middleware import get_current_user
+from ..core.task_coordination import processed_key
 from .repository import find_all_tasks, find_task_by_redis_id
+from .service import (
+    CANCELLABLE_STATUSES,
+    build_task_progress_payload,
+    cancel_task as _cancel_task_processing,
+)
 
 redis_dev = redis_server_dev()
 logger = logging.getLogger(__name__)
@@ -66,13 +72,48 @@ async def get_task_result(
         )
 
     if status_val == "in_progress":
+        processed_raw = redis_dev.get(processed_key(task_id))
+        processed_images = (
+            int(processed_raw)
+            if processed_raw is not None
+            else result_json.get("processed_images", 0)
+        )
+        payload = await build_task_progress_payload(db, task_id)
         return {
             "completed": False,
             "status": "in_progress",
             "total_images": result_json.get("total_images", 0),
-            "processed_images": result_json.get("processed_images", 0),
-            "result": result_json.get("descriptions"),
+            "processed_images": processed_images,
+            "result": payload or {"images": {}, "total_images": result_json.get("total_images", 0)},
         }
 
-    # "completed" ou ancien format {"epub_path", "descriptions"} sans status
+    if status_val == "completed":
+        payload = await build_task_progress_payload(db, task_id)
+        return {
+            "completed": True,
+            "status": "completed",
+            "result": payload if payload is not None else result_json,
+        }
+
+    # ancien format {"epub_path", "descriptions"} sans status (tâches pré-migration)
     return {"completed": True, "status": "completed", "result": result_json}
+
+
+async def cancel_task(
+    task_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+):
+    task = await find_task_by_redis_id(db, task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tâche non trouvée")
+    if task.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
+    if task.status not in CANCELLABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La tâche n'est plus annulable (déjà terminée, en échec ou déjà annulée)",
+        )
+
+    await _cancel_task_processing(db, redis_dev, task)
+    return {"task_id": task_id, "status": "cancelled"}

@@ -130,6 +130,31 @@ def get_object_upstream(object:str, bucket: str):
     client = get_client()
     return client.get_object(bucket_name=bucket, object_name=object)
 
+
+def download_object_bytes(bucket: str, object_key: str) -> bytes:
+    """Télécharge le contenu d'un objet MinIO (utilisé par les tâches modèles
+    pour récupérer une image extraite sans passer par le disque partagé)."""
+    client = get_client()
+    response = client.get_object(bucket_name=bucket, object_name=object_key)
+    try:
+        return response.read()
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def remove_objects(bucket: str, object_keys: List[str]) -> None:
+    """Supprime des objets MinIO, au mieux (annulation d'une tâche) : une
+    erreur sur un objet ne doit pas empêcher la suppression des autres."""
+    if not bucket or not object_keys:
+        return
+    client = get_client()
+    for object_key in object_keys:
+        try:
+            client.remove_object(bucket, object_key)
+        except S3Error as exc:
+            print(f"Impossible de supprimer l'objet {object_key} du bucket {bucket}: {exc}")
+
 def storage_minio(epub_path: str, list_images_paths: List[str], tmp: str, file_name: str):
     if not epub_path:
         print("Epub non trouvé")

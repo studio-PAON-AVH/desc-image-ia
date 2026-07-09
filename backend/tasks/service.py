@@ -1,13 +1,28 @@
+import json
+import logging
+import os
+from collections import defaultdict
 from typing import List
+
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..core.database.config import Task
+from ..core.storage import remove_objects
+from ..core.task_coordination import mark_cancelled
+from ..epub.repository import update_task_status as _update_task_status
 from .repository import (
     find_task_by_redis_id,
     find_images_with_descriptions,
     find_images_by_task,
     find_image_by_position,
     find_all_models,
+    delete_epub_and_children,
     upsert_final_description,
 )
+
+logger = logging.getLogger(__name__)
+
+CANCELLABLE_STATUSES = ("pending", "in_progress")
 
 
 async def get_image_location(
@@ -35,6 +50,39 @@ def _get_model_key(model_name: str) -> str | None:
     if "git" in name_lower:
         return "git_large"
     return model_name
+
+
+async def build_task_progress_payload(session: AsyncSession, task_id_redis: str) -> dict | None:
+    """Reconstruit le payload {images: {image_N: {modèle: {...}}}, total_images}
+    attendu par le front (même forme que l'ancien blob Redis mis à jour à
+    chaque slice), mais depuis la DB.
+
+    Nécessaire depuis le passage en multi-queue : chaque tâche modèle persiste
+    directement son résultat en DB, il n'y a plus de blob Redis agrégé à jour
+    en continu à lire pour le polling in_progress/completed.
+    """
+    task = await find_task_by_redis_id(session, task_id_redis)
+    if not task:
+        return None
+
+    images = await find_images_with_descriptions(session, task.id)
+
+    images_payload = {}
+    for image in images:
+        entry = {
+            "index": image.image_position_in_epub,
+            "file_name": image.image_file_name,
+            "salesforce_blip": None,
+            "florence2": None,
+            "git_large": None,
+        }
+        for desc in image.description:
+            model_key = _get_model_key(desc.modelIA.name) if desc.modelIA else None
+            if model_key in entry:
+                entry[model_key] = {"french_description": desc.description_text}
+        images_payload[f"image_{image.image_position_in_epub}"] = entry
+
+    return {"images": images_payload, "total_images": len(images)}
 
 
 async def get_task_descriptions(session: AsyncSession, task_id_redis: str) -> dict | None:
@@ -123,3 +171,38 @@ async def validate_task_descriptions(session: AsyncSession, task_id_redis: str, 
 
     await session.commit()
     return True
+
+
+async def cancel_task(session: AsyncSession, r, task: Task) -> None:
+    """Annule une tâche en cours (ou en attente).
+
+    Pose le flag Redis coopératif lu par les sous-tâches modèles avant de
+    traiter leur batch, marque la tâche "cancelled", puis supprime l'Epub et
+    toutes les données dérivées (DB + MinIO + fichier temporaire) afin de
+    permettre de relancer un traitement sur le même fichier.
+    """
+    mark_cancelled(r, task.task_id_redis)
+    await _update_task_status(session, task.id, "cancelled")
+
+    epub_path = None
+    redis_payload = r.get(task.task_id_redis)
+    if redis_payload:
+        try:
+            epub_path = json.loads(redis_payload).get("epub_path")
+        except ValueError:
+            epub_path = None
+
+    storage_locations = await delete_epub_and_children(session, task.id)
+    by_bucket = defaultdict(list)
+    for bucket, object_key in storage_locations:
+        by_bucket[bucket].append(object_key)
+    for bucket, object_keys in by_bucket.items():
+        remove_objects(bucket, object_keys)
+
+    if epub_path and os.path.exists(epub_path):
+        try:
+            os.remove(epub_path)
+        except OSError as exc:
+            logger.error("Impossible de supprimer le fichier epub %s: %s", epub_path, exc)
+
+    r.set(task.task_id_redis, json.dumps({"status": "cancelled"}, ensure_ascii=False))
