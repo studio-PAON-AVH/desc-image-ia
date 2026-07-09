@@ -24,17 +24,18 @@ jobs:
           ssh -vvv -o BatchMode=yes ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} 'echo OK' || true
       - name: Copy production folder contents
         run: |
-          ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} 'mkdir -p /opt/project_ia'
-          scp -r prod/. \
-            ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }}:/opt/project_ia/
-      - name: Pull + restart
+          ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} 'mkdir -p /opt/desc-image-ia'
+          scp docker-compose.prod.yml .env.prod \
+            ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }}:/opt/desc-image-ia/
+          scp -r backend/core/observability/grafana \
+            ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }}:/opt/desc-image-ia/
+      - name: Pull images Docker
         env:
           GHCR_PAT: ${{ secrets.GHCR_PAT }}
         run: |
-          # Le token est envoyé via le stdin de ssh, lu par `docker login
-          # --password-stdin` : il n'apparaît dans aucune liste de process ni dans les logs, ni en local ni sur le serveur.
           printf '%s' "$GHCR_PAT" | ssh ${{ secrets.PROD_USER }}@${{ secrets.PROD_HOST }} \
             'docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && \
-             cd /opt/project_ia && \
+             cd /opt/desc-image-ia && \
+             { [ -f .env ] || cp .env.prod .env; } && \
              docker compose --env-file .env -f docker-compose.prod.yml pull && \
              docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans'

@@ -1,9 +1,16 @@
 from datetime import datetime
 from typing import List
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..core.database.config import Task, Images, DescriptionByIA, DescriptionFinale, ModelsIA
+from ..core.database.config import (
+    Task,
+    Epub,
+    Images,
+    DescriptionByIA,
+    DescriptionFinale,
+    ModelsIA,
+)
 
 
 async def find_task_by_redis_id(session: AsyncSession, task_id_redis: str) -> Task | None:
@@ -46,6 +53,33 @@ async def find_image_by_position(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def delete_epub_and_children(session: AsyncSession, task_id: int) -> List[tuple]:
+    """Supprime l'Epub et toutes les données dérivées (images, descriptions)
+    liées à une tâche, afin de permettre un nouvel upload du même fichier.
+
+    Retourne la liste des emplacements MinIO (bucket, object_key) des images
+    qui étaient stockées, pour que l'appelant supprime aussi les objets.
+    """
+    images = await find_images_by_task(session, task_id)
+    image_ids = [image.id for image in images]
+    storage_locations = [
+        (image.storage_bucket, image.storage_object_key)
+        for image in images
+        if image.storage_bucket and image.storage_object_key
+    ]
+
+    if image_ids:
+        await session.execute(delete(DescriptionByIA).where(DescriptionByIA.image_id.in_(image_ids)))
+        await session.execute(
+            delete(DescriptionFinale).where(DescriptionFinale.image_id.in_(image_ids))
+        )
+        await session.execute(delete(Images).where(Images.id.in_(image_ids)))
+
+    await session.execute(delete(Epub).where(Epub.task_id == task_id))
+    await session.commit()
+    return storage_locations
 
 
 async def find_all_models(session: AsyncSession) -> List[ModelsIA]:

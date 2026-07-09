@@ -1,3 +1,38 @@
+x-worker-env: &worker-env
+  APP_ENV: .env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  REDIS_URL: redis://redis:6379/1
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  POSTGRES_HOST: postgresql
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB}
+  UPLOAD_TEMP_DIR: /shared
+  URL_SALESFORCE_CPU_LARGE: http://saleforce_cpu_large:8000/describe
+  URL_FLORANCE_2_LARGE: http://florence2_large:8000/describe
+  URL_GIT_LARGE: http://git_large:8000/describe
+  BATCH_SIZE: ${BATCH_SIZE}
+  BATCH_MAX: ${BATCH_MAX}
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
+
+x-worker-depends-on: &worker-depends-on
+  postgresql:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  minio:
+    condition: service_healthy
+  saleforce_cpu_large:
+    condition: service_healthy
+  florence2_large:
+    condition: service_healthy
+  git_large:
+    condition: service_healthy
+
 services:
 
   minio:
@@ -214,46 +249,58 @@ services:
       redis:
         condition: service_healthy
 
+  # Orchestrateur : extraction epub + upload MinIO + fan-out vers les 3 queues
+  # modèles ci-dessous. N'appelle plus lui-même les modèles IA.
   worker-taskiq:
     build:
       context: .
       dockerfile: ./backend/worker/Dockerfile
     restart: unless-stopped
     environment:
-      APP_ENV: .env
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4317
-      OTEL_EXPORTER_OTLP_INSECURE: "true"
-      REDIS_URL: redis://redis:6379/1
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      POSTGRES_HOST: postgresql
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      UPLOAD_TEMP_DIR: /shared
-      URL_SALESFORCE_CPU_LARGE: http://saleforce_cpu_large:8000/describe
-      URL_FLORANCE_2_LARGE: http://florence2_large:8000/describe
-      URL_GIT_LARGE: http://git_large:8000/describe
-      BATCH_SIZE: ${BATCH_SIZE}
-      BATCH_MAX: ${BATCH_MAX}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      <<: *worker-env
+      TASKIQ_BROKER: backend.worker.worker:broker
     volumes:
       - epub_shared:/shared
-    depends_on:
-      postgresql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      saleforce_cpu_large:
-        condition: service_healthy
-      florence2_large:
-        condition: service_healthy
-      git_large:
-        condition: service_healthy
+    depends_on: *worker-depends-on
+
+  # Un worker dédié par modèle, chacun ne consommant que sa propre queue
+  # taskiq (cf. backend/broker.py) : permet de scaler/redémarrer un modèle
+  # indépendamment des autres au lieu de tout concentrer dans un seul worker.
+  worker-salesforce:
+    build:
+      context: .
+      dockerfile: ./backend/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *worker-env
+      TASKIQ_BROKER: backend.worker.model_tasks:broker_salesforce
+    volumes:
+      - epub_shared:/shared
+    depends_on: *worker-depends-on
+
+  worker-florence2:
+    build:
+      context: .
+      dockerfile: ./backend/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *worker-env
+      TASKIQ_BROKER: backend.worker.model_tasks:broker_florence2
+    volumes:
+      - epub_shared:/shared
+    depends_on: *worker-depends-on
+
+  worker-git:
+    build:
+      context: .
+      dockerfile: ./backend/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *worker-env
+      TASKIQ_BROKER: backend.worker.model_tasks:broker_git
+    volumes:
+      - epub_shared:/shared
+    depends_on: *worker-depends-on
 
 volumes:
   epub_shared:

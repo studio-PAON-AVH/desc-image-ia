@@ -72,7 +72,15 @@ class Task(Base):
     task_id_redis: Mapped[str] = mapped_column(String(255), unique=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("Users.id"))
     status: Mapped[str] = mapped_column(
-        Enum("pending", "in_progress", "completed", "failed", name="task_status", default="pending")
+        Enum(
+            "pending",
+            "in_progress",
+            "completed",
+            "failed",
+            "cancelled",
+            name="task_status",
+            default="pending",
+        )
     )
     total_images: Mapped[int] = mapped_column(Integer)
     processed_images: Mapped[int] = mapped_column(Integer)

@@ -32,7 +32,26 @@ reports/
 # TypeScript build artifacts
 # =========================================
 *.tsbuildinfo
- 
+
+# =========================================
+# Python virtual environments and caches
+# =========================================
+.venv/
+**/.venv/
+venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+*.egg-info/
+**/*.egg-info/
+
 # =========================================
 # Debug and lockfiles
 # =========================================
