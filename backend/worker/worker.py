@@ -155,7 +155,10 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                 await update_task_status(session, db_task_id, "completed")
             r.set(
                 task_id,
-                json.dumps({"status": "completed", "total_images": 0}, ensure_ascii=False),
+                json.dumps(
+                    {"status": "completed", "epub_path": epub_path, "total_images": 0},
+                    ensure_ascii=False,
+                ),
             )
             return
 

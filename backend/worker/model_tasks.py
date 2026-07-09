@@ -62,9 +62,26 @@ async def _finalize_if_done(task_id: str, db_task_id: int, total_images: int) ->
         task_duration.record(time.monotonic() - float(started_raw), {"status": "completed"})
     task_counter.add(1, {"status": "completed"})
 
+    # epub_path n'est pas passé aux tâches modèles (elles ne travaillent que sur
+    # des objets MinIO) : on le récupère du blob "in_progress" écrit par
+    # l'orchestrateur pour ne pas le perdre dans le blob final — download_epub
+    # et add_descriptions_to_epub en ont besoin pour générer l'EPUB modifié.
+    epub_path = None
+    existing_raw = r.get(task_id)
+    if existing_raw:
+        try:
+            existing_data = json.loads(existing_raw)
+        except (ValueError, TypeError):
+            existing_data = None
+        if isinstance(existing_data, dict):
+            epub_path = existing_data.get("epub_path")
+
     r.set(
         task_id,
-        json.dumps({"status": "completed", "total_images": total_images}, ensure_ascii=False),
+        json.dumps(
+            {"status": "completed", "epub_path": epub_path, "total_images": total_images},
+            ensure_ascii=False,
+        ),
     )
 
 

@@ -1,3 +1,4 @@
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -106,10 +107,25 @@ class TestDescribeBatch:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_last_batch_finalizes_task_as_completed(self, mocker):
+        from backend.core.task_coordination import started_key
+
         mocks = self._patch_common(mocker, cancelled=False)
         mocks["redis"].incr.return_value = 1
         mocks["redis"].decr.return_value = 0  # dernier batch en attente
-        mocks["redis"].get.return_value = b"100.0"
+
+        # started_key("task-1") -> horodatage de départ ; "task-1" (le blob de
+        # statut écrit par l'orchestrateur) -> doit contenir epub_path, relu
+        # ici pour ne pas le perdre dans le blob final "completed".
+        existing_blob = json.dumps({"status": "in_progress", "epub_path": "/shared/book.epub"})
+
+        def fake_get(key):
+            if key == started_key("task-1"):
+                return b"100.0"
+            if key == "task-1":
+                return existing_blob.encode()
+            return None
+
+        mocks["redis"].get.side_effect = fake_get
 
         mock_task = MagicMock(status="in_progress")
         mocks["session"].get = AsyncMock(return_value=mock_task)
@@ -123,6 +139,35 @@ class TestDescribeBatch:
         mocks["task_counter"].add.assert_called_once_with(1, {"status": "completed"})
         final_set_call = mocks["redis"].set.call_args_list[-1]
         assert final_set_call.args[0] == "task-1"
+        final_payload = json.loads(final_set_call.args[1])
+        assert final_payload["status"] == "completed"
+        assert final_payload["epub_path"] == "/shared/book.epub"
+        assert final_payload["total_images"] == 1
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_finalize_survives_non_dict_existing_blob(self, mocker):
+        """Si le blob existant n'est pas un objet JSON (ex: corruption, ou
+        collision de clé), la finalisation ne doit pas planter : epub_path
+        retombe simplement à None au lieu de lever une AttributeError."""
+        mocks = self._patch_common(mocker, cancelled=False)
+        mocks["redis"].incr.return_value = 1
+        mocks["redis"].decr.return_value = 0
+        mocks["redis"].get.return_value = b"100.0"  # ni un dict, ni du JSON d'objet
+
+        mock_task = MagicMock(status="in_progress")
+        mocks["session"].get = AsyncMock(return_value=mock_task)
+
+        from backend.worker.model_tasks import _describe_batch
+
+        batch_images = [{"image_id": 101, "object_key": "key0"}]
+        await _describe_batch("task-1", 42, "salesforce_blip", 7, "bucket", batch_images, 1)
+
+        mocks["update"].assert_called_once_with(mocks["session"], 42, "completed")
+        final_set_call = mocks["redis"].set.call_args_list[-1]
+        final_payload = json.loads(final_set_call.args[1])
+        assert final_payload["status"] == "completed"
+        assert final_payload["epub_path"] is None
 
     @pytest.mark.unit
     @pytest.mark.asyncio
