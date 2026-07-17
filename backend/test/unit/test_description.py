@@ -5,20 +5,20 @@ from unittest.mock import AsyncMock, MagicMock
 from backend.descriptions.service import get_validated_description, add_descriptions
 
 
-def make_epub_zip(tmp_path, image_name="cat.jpg", add_opf=True):
+def make_epub_zip(tmp_path, image_name="cat.jpg", add_html=True):
     """Crée un fichier epub (zip) minimal dans tmp_path et retourne son chemin."""
     epub_path = str(tmp_path / "book.epub")
-    opf_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf">
-  <manifest>
-    <item id="img1" href="images/{image_name}" media-type="image/jpeg"/>
-  </manifest>
-</package>""".encode("utf-8")
+    html_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<body>
+<img src="images/{image_name}" alt=""/>
+</body>
+</html>""".encode("utf-8")
 
     with zipfile.ZipFile(epub_path, "w") as zf:
         zf.writestr("mimetype", "application/epub+zip")
-        if add_opf:
-            zf.writestr("content.opf", opf_content)
+        if add_html:
+            zf.writestr("chapter1.xhtml", html_content)
         zf.writestr(f"images/{image_name}", b"fake_image_bytes")
 
     return epub_path
@@ -68,7 +68,7 @@ class TestDescriptionService:
         @pytest.mark.unit
         @pytest.mark.asyncio
         async def test_add_descriptions_success(self, mocker, tmp_path, session):
-            """Epub valide avec OPF et image → alt ajouté, output_path retourné."""
+            """Epub valide avec HTML/XHTML et image → alt ajouté, output_path retourné."""
             epub_path = make_epub_zip(tmp_path, image_name="cat.jpg")
             output_path = str(tmp_path / "book_modified.epub")
 
@@ -80,16 +80,18 @@ class TestDescriptionService:
             result = await add_descriptions(session, "task-123", epub_path, output_path)
 
             assert result == output_path
-            assert (tmp_path / "book_modified.epub").exists()
+            with zipfile.ZipFile(output_path) as zf:
+                content = zf.read("chapter1.xhtml").decode("utf-8")
+            assert 'alt="Un chat"' in content
 
         @pytest.mark.unit
         @pytest.mark.asyncio
-        async def test_add_descriptions_no_opf(self, session, tmp_path):
-            """Epub sans fichier .opf → ValueError."""
-            epub_path = make_epub_zip(tmp_path, add_opf=False)
+        async def test_add_descriptions_no_html(self, session, tmp_path):
+            """Epub sans fichier .html/.xhtml → ValueError."""
+            epub_path = make_epub_zip(tmp_path, add_html=False)
             output_path = str(tmp_path / "output.epub")
 
-            with pytest.raises(ValueError, match="OPF"):
+            with pytest.raises(ValueError, match="HTML ou XHTML"):
                 await add_descriptions(session, "task-123", epub_path, output_path)
 
         @pytest.mark.unit
