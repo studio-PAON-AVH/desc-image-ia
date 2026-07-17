@@ -11,7 +11,13 @@ from backend.core.observability.metric import task_counter, task_duration
 from backend.core.redis.redis import redis_server_dev
 from backend.core.storage import download_object_bytes
 from backend.epub.repository import update_task_status as _repo_update_task_status
-from backend.epub.service import call_model, get_model_semaphore, get_model_url, save_descriptions_by_ids
+from backend.epub.service import (
+    call_model,
+    get_model_semaphore,
+    get_model_url,
+    save_descriptions_by_ids,
+    set_processed_images,
+)
 from ..core.task_coordination import (
     NUM_MODELS,
     is_cancelled,
@@ -140,10 +146,15 @@ async def _describe_batch(
             results = (result or {}).get("results") or []
             await _persist_slice(model_id, batch_images, results)
 
+            processed_count = None
             for entry in batch_images:
                 done = r.incr(image_done_key(task_id, entry["image_id"]))
                 if done == NUM_MODELS:
-                    r.incr(processed_key(task_id))
+                    processed_count = r.incr(processed_key(task_id))
+
+            if processed_count is not None:
+                async with async_session() as session:
+                    await set_processed_images(session, db_task_id, processed_count)
 
             await _finalize_if_done(task_id, db_task_id, total_images)
     except Exception as exc:

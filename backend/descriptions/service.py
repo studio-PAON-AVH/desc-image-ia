@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..core.database.config import Task, Images, DescriptionFinale
 
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif")
 
 async def get_validated_description(session: AsyncSession, task_id_redis: str) -> dict[str, str]:
     result = await session.execute(
@@ -37,37 +38,45 @@ async def add_descriptions(
         total_size = sum(info.file_size for info in zip_ref.infolist())
         if total_size > max_uncompressed_size:
             raise ValueError("L'EPUB est trop volumineux une fois décompressé (max 500 Mo)")
-        namelist = zip_ref.namelist()
-        opf_path = next((name for name in namelist if name.endswith(".opf")), None)
-        if not opf_path:
-            raise ValueError("Fichier OPF non trouvé dans l'epub.")
-        opf_content = zip_ref.read(opf_path).decode("utf-8")
-        all_files = {name: zip_ref.read(name) for name in namelist}
+        names = zip_ref.namelist()
+        html_items = [
+            name for name in names if name.endswith((".html", ".xhtml"))
+        ]
+        if not html_items:
+            raise ValueError(f"Aucun fichier HTML ou XHTML trouvé dans l'EPUB : {epub_path}")
 
-    description = await get_validated_description(session, task_id_redis)
+        modified_content = {}
+        description = await get_validated_description(session, task_id_redis)
 
-    soup = BeautifulSoup(opf_content, "xml")
-    for item in soup.find_all("item"):
-        media_type = item.get("media-type", "")
-        href = item.get("href", "")
-        if media_type.startswith("image/"):
-            img_base_name = os.path.basename(href)
-            if img_base_name in description:
-                item["alt"] = description[img_base_name]
+        for item_name in html_items:
+            content = zip_ref.read(item_name).decode("utf-8")
+            soup = BeautifulSoup(content, "html.parser")
+            changed = False
+            for img in soup.find_all("img"):
+                src_text = img.get("src", "")
+                if src_text.lower().endswith(IMAGE_EXTENSIONS):
+                    img_base_name = os.path.basename(src_text)
+                    new_description = description.get(img_base_name)
+                    if new_description:
+                        img["alt"] = new_description
+                        changed = True
+            if changed:
+                modified_content[item_name] = str(soup).encode("utf-8")
+        
+        tmp_path = epub_path + ".tmp"
+        with zipfile.ZipFile(tmp_path, "w") as zip_write:
+            if "mimetype" in names:
+                zip_write.writestr(
+                    zipfile.ZipInfo("mimetype"), zip_ref.read("mimetype"), compress_type=zipfile.ZIP_STORED
+                )
+            for name in names:
+                if name == "mimetype":
+                    continue
+                if name in modified_content:
+                    zip_write.writestr(name, modified_content[name], compress_type=zipfile.ZIP_DEFLATED)
+                else:
+                    zip_write.writestr(name, zip_ref.read(name), compress_type=zipfile.ZIP_DEFLATED)
 
-    modified_opf = str(soup).encode("utf-8")
-    tpm_path = output_path + ".tmp"
-    with zipfile.ZipFile(tpm_path, "w") as zip_write:
-        if "mimetype" in all_files:
-            zip_write.writestr(
-                zipfile.ZipInfo("mimetype"), all_files["mimetype"], compress_type=zipfile.ZIP_STORED
-            )
-        for name in namelist:
-            if name == "mimetype":
-                continue
-            if name == opf_path:
-                zip_write.writestr(name, modified_opf, compress_type=zipfile.ZIP_DEFLATED)
-            else:
-                zip_write.writestr(name, all_files[name], compress_type=zipfile.ZIP_DEFLATED)
-    os.replace(tpm_path, output_path)
+    os.replace(tmp_path, output_path)
     return output_path
+    
