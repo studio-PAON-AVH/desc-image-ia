@@ -9,6 +9,7 @@ volumes:
   redis_data:
   epub_shared:
   lgtm_data:
+  minio_data:
 
 x-logging: &logging
   driver: json-file
