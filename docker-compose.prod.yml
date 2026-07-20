@@ -59,6 +59,26 @@ services:
 
   # Orchestrateur : extraction epub + upload MinIO + fan-out vers les 3 queues
   # modèles ci-dessous. N'appelle plus lui-même les modèles IA.
+  
+  minio:
+    image: ghcr.io/studio-paon-avh/minio:latest
+    container_name: desc-image-ia-minio
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+    networks: [app-net]
+    logging: *logging
+
   worker:
     image: ghcr.io/studio-paon-avh/worker:latest
     restart: unless-stopped
