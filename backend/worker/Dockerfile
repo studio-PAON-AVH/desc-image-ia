@@ -12,4 +12,9 @@ RUN poetry install --only main --no-cache
 
 COPY ./backend /app/backend
 ENV PYTHONPATH=/app
-CMD ["python", "-m", "taskiq", "worker", "backend.worker.worker:broker", "--workers", "1"]
+
+# Cible taskiq (module:broker) à consommer par ce container. Par défaut,
+# l'orchestrateur (extraction + fan-out) ; surchargé par docker-compose pour
+# les workers dédiés à chaque modèle (backend.worker.model_tasks:broker_xxx).
+ENV TASKIQ_BROKER=backend.worker.worker:broker
+CMD python -m taskiq worker ${TASKIQ_BROKER} --workers 1

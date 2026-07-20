@@ -2,7 +2,7 @@ from datetime import timedelta
 import os
 from typing import Annotated
 from fastapi import Depends, HTTPException, Request, Response, status
-from fastapi_limiter.depends import RateLimiter
+from .rate_limit import RateLimiter
 from pyrate_limiter import Duration, Limiter, Rate
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database.config import User, get_session

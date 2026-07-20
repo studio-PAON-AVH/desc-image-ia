@@ -3,9 +3,7 @@ import logging
 import shutil
 import os
 import time
-import base64
 
-from collections import defaultdict
 from opentelemetry import trace
 from sqlalchemy import select
 from taskiq import TaskiqEvents
@@ -22,16 +20,26 @@ from backend.epub.service import (
     save_images,
     save_images_storage,
     extract_images_epub,
-    stream_image_describe,
-    slice_to_image_descriptions,
-    save_descriptions_slice,
     set_total_images,
-    set_processed_images,
     update_task_status,
+    _resolve_batch_size,
 )
 from backend.core.database.config import async_session, Task, Epub, ModelsIA
 from backend.core.storage import storage_minio
 from backend.core.redis.redis import redis_server_dev
+from ..core.task_coordination import (
+    MODEL_KEYS,
+    COORDINATION_TTL_SECONDS,
+    is_cancelled,
+    remaining_key,
+    processed_key,
+    started_key,
+)
+from .model_tasks import (
+    describe_batch_salesforce_blip,
+    describe_batch_florence2,
+    describe_batch_git_large,
+)
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -39,6 +47,12 @@ tracer = trace.get_tracer(__name__)
 MODEL_SALESFORCE = "Salesforce BLIP"
 MODEL_FLORENCE = "Florence-2"
 MODEL_GIT = "GIT Large"
+
+MODEL_BATCH_TASKS = {
+    "salesforce_blip": describe_batch_salesforce_blip,
+    "florence2": describe_batch_florence2,
+    "git_large": describe_batch_git_large,
+}
 
 r = redis_server_dev()
 
@@ -82,13 +96,24 @@ async def recover_stuck_tasks(state):
 
 @broker.task(retry_on_error=True, max_retries=3)
 async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, epub_id: int):
+    """Orchestrateur : extrait les images, les stocke (DB + MinIO), puis
+    répartit ("fan-out") chaque (batch, modèle) sur la queue taskiq dédiée à ce
+    modèle. Ne fait plus lui-même les appels aux modèles IA — il ne les
+    attend donc pas : chaque tâche modèle persiste directement son résultat et
+    la dernière à se terminer finalise le statut de la tâche (cf. model_tasks.py).
+    """
     started = time.monotonic()
-    # Nombre d'EPUB traités en parallèle dans le worker : décrément garanti en
-    # finally même en cas d'échec/retry, pour que la jauge ne dérive pas.
+    # Ne couvre que la phase d'ingestion (extraction + upload) : les appels aux
+    # modèles se font maintenant dans des workers séparés, hors de ce gauge.
     worker_tasks_in_flight.add(1)
     try:
         async with async_session() as session:
             await update_task_status(session, db_task_id, "in_progress")
+
+            if is_cancelled(r, task_id):
+                await update_task_status(session, db_task_id, "cancelled")
+                return
+
             with tracer.start_as_current_span("extract_images_epub"):
                 image_paths, temp_folder = extract_images_epub(epub_path)
             images = await save_images(session, db_task_id, epub_id, image_paths)
@@ -97,17 +122,19 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                 epub_path=epub_path,
                 list_images_paths=image_paths,
                 tmp=temp_folder,
-                file_name=epub_record.file_name
+                file_name=epub_record.file_name,
             )
             await save_images_storage(session, images, bucket, object_keys)
 
-            img_list = []
-            for img_path in image_paths:
-                with open(img_path, "rb") as f:
-                    img_bs64 = base64.b64encode(f.read()).decode("utf-8")
-                    img_list.append(img_bs64)
+            if temp_folder:
+                try:
+                    shutil.rmtree(temp_folder)
+                except OSError as e:
+                    logger.error(
+                        "Impossible de supprimer le dossier temporaire %s: %s", temp_folder, e
+                    )
 
-            total_images = len(img_list)
+            total_images = len(image_paths)
             await set_total_images(session, db_task_id, total_images)
             epub_images_per_file.record(total_images)
 
@@ -123,101 +150,50 @@ async def process_epub_describe(epub_path: str, task_id: str, db_task_id: int, e
                 "git_large": models.get(MODEL_GIT),
             }
 
-            # Structure partielle, miroir de la sortie de get_image_describe.
-            # On embarque le vrai nom de fichier (issu de l'EPUB) pour que le
-            # front puisse l'afficher au lieu d'un index synthétique.
-            partial = {
-                f"image_{i}": {
-                    "index": i,
-                    "file_name": os.path.basename(image_paths[i]),
-                    "salesforce_blip": None,
-                    "florence2": None,
-                    "git_large": None,
-                }
-                for i in range(total_images)
-            }
-            done_counts = defaultdict(int)
-            seen = set()
-            processed_images = 0
-
-            async for evt in stream_image_describe(img_list):
-                model_key = evt["model_key"]
-                slice_map = slice_to_image_descriptions(
-                    evt["batch_idx"],
-                    evt["batch_size"],
-                    model_key,
-                    evt["result"],
-                    evt["total_images"],
-                )
-
-                # Persiste ce slice (commit par (batch, modèle))
-                await save_descriptions_slice(
-                    session, images, model_mapping.get(model_key), slice_map
-                )
-
-                # Met à jour la structure partielle + la progression par image.
-                # On compte chaque (modèle, image) à la première vue — même si le
-                # slice est vide (modèle en échec) — pour qu'un modèle mort ne
-                # bloque pas le compteur processed_images.
-                offset = evt["batch_idx"] * evt["batch_size"]
-                batch_indices = range(
-                    offset, min(offset + evt["batch_size"], total_images)
-                )
-                for global_idx in batch_indices:
-                    if global_idx in slice_map:
-                        partial[f"image_{global_idx}"][model_key] = slice_map[global_idx]
-                    key = (model_key, global_idx)
-                    if key not in seen:
-                        seen.add(key)
-                        done_counts[global_idx] += 1
-                        if done_counts[global_idx] == len(model_mapping):
-                            processed_images += 1
-
-                await set_processed_images(session, db_task_id, processed_images)
-                r.set(
-                    task_id,
-                    json.dumps(
-                        {
-                            "status": "in_progress",
-                            "epub_path": epub_path,
-                            "total_images": total_images,
-                            "processed_images": processed_images,
-                            "descriptions": {
-                                "images": partial,
-                                "total_images": total_images,
-                            },
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
-
-            await update_task_status(session, db_task_id, "completed")
-            task_counter.add(1, {"status": "completed"})
-            task_duration.record(time.monotonic() - started, {"status": "completed"})
+        if total_images == 0:
+            async with async_session() as session:
+                await update_task_status(session, db_task_id, "completed")
             r.set(
                 task_id,
                 json.dumps(
-                    {
-                        "status": "completed",
-                        "epub_path": epub_path,
-                        "total_images": total_images,
-                        "processed_images": processed_images,
-                        "descriptions": {
-                            "images": partial,
-                            "total_images": total_images,
-                        },
-                    },
+                    {"status": "completed", "epub_path": epub_path, "total_images": 0},
                     ensure_ascii=False,
                 ),
             )
+            return
 
-            if temp_folder:
-                try:
-                    shutil.rmtree(temp_folder)
-                except OSError as e:
-                    logger.error(
-                        "Impossible de supprimer le dossier temporaire %s: %s", temp_folder, e
-                    )
+        r.set(started_key(task_id), started, ex=COORDINATION_TTL_SECONDS)
+        r.set(processed_key(task_id), 0, ex=COORDINATION_TTL_SECONDS)
+        r.set(
+            task_id,
+            json.dumps(
+                {"status": "in_progress", "epub_path": epub_path, "total_images": total_images},
+                ensure_ascii=False,
+            ),
+        )
+
+        batch_size = _resolve_batch_size()
+        batches = [
+            list(range(i, min(i + batch_size, total_images)))
+            for i in range(0, total_images, batch_size)
+        ]
+        total_sub_tasks = len(batches) * len(MODEL_KEYS)
+        r.set(remaining_key(task_id), total_sub_tasks, ex=COORDINATION_TTL_SECONDS)
+
+        for indices in batches:
+            batch_images = [
+                {"image_id": images[i].id, "object_key": object_keys[i]} for i in indices
+            ]
+            for model_key in MODEL_KEYS:
+                await MODEL_BATCH_TASKS[model_key].kiq(
+                    task_id,
+                    db_task_id,
+                    model_key,
+                    model_mapping.get(model_key),
+                    bucket,
+                    batch_images,
+                    total_images,
+                )
 
     except Exception as e:
         logger.exception("Erreur lors du traitement de la tâche %s", task_id)

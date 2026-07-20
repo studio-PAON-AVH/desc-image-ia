@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timezone
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import update as sql_update, delete
+from sqlalchemy import update as sql_update, delete, func
 from ..core.database.config import Task, Epub, Images, DescriptionByIA
 
 
@@ -145,6 +145,42 @@ async def save_image_descriptions_slice(
     return written
 
 
+async def save_image_descriptions_by_ids(
+    session: AsyncSession,
+    model_id: int | None,
+    items: List[tuple[int, str]],
+) -> int:
+    """Persiste des descriptions identifiées par (image_id, texte) directement,
+    sans dépendre d'une liste ordonnée d'Images complète.
+
+    Utilisé par les tâches taskiq par modèle : chacune ne connaît que le
+    sous-ensemble d'images de son propre batch, pas la liste complète de
+    l'EPUB. Idempotent comme save_image_descriptions_slice (delete puis insert).
+    """
+    written = 0
+    for image_id, description_text in items:
+        if not description_text:
+            continue
+        await session.execute(
+            delete(DescriptionByIA).where(
+                DescriptionByIA.image_id == image_id,
+                DescriptionByIA.model_ia_id == model_id,
+            )
+        )
+        session.add(
+            DescriptionByIA(
+                image_id=image_id,
+                model_ia_id=model_id,
+                description_text=description_text,
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        written += 1
+    await session.commit()
+    return written
+
+
 async def set_task_total_images(session: AsyncSession, db_task_id: int, total: int) -> None:
     await session.execute(
         sql_update(Task)
@@ -157,10 +193,14 @@ async def set_task_total_images(session: AsyncSession, db_task_id: int, total: i
 async def set_task_processed_images(
     session: AsyncSession, db_task_id: int, processed: int
 ) -> None:
+    """Écrit `processed` seulement s'il dépasse la valeur déjà en DB : plusieurs
+    batches modèles peuvent incrémenter le compteur Redis concurremment, et
+    leurs écritures DB peuvent arriver dans le désordre. GREATEST évite qu'une
+    écriture tardive mais plus petite fasse reculer la progression affichée."""
     await session.execute(
         sql_update(Task)
         .where(Task.id == db_task_id)
-        .values(processed_images=processed)
+        .values(processed_images=func.greatest(Task.processed_images, processed))
     )
     await session.commit()
 

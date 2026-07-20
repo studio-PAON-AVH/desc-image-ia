@@ -28,6 +28,7 @@ from .repository import (
     set_images_storage as _repo_set_images_storage,
     create_image_descriptions_batch,
     save_image_descriptions_slice as _repo_save_image_descriptions_slice,
+    save_image_descriptions_by_ids as _repo_save_image_descriptions_by_ids,
     set_task_total_images as _repo_set_task_total_images,
     set_task_processed_images as _repo_set_task_processed_images,
     update_task_status as _repo_update_task_status,
@@ -61,6 +62,53 @@ def _get_model_semaphores():
     return sems
 
 
+def get_model_semaphore(model_key: str) -> asyncio.Semaphore:
+    """Sémaphore partagé (par event loop) plafonnant la concurrence pour un
+    modèle donné. Utilisé par stream_image_describe (3 modèles dans un même
+    process) et par les tâches taskiq par modèle (un seul modèle par worker,
+    mais son process peut exécuter plusieurs tâches taskiq concurrentes)."""
+    return _get_model_semaphores()[model_key]
+
+
+async def call_model(url: str, image_list: List[str]) -> dict:
+    """Envoie un batch d'images (base64) à un modèle IA et normalise la réponse.
+
+    Isolé de stream_image_describe pour être réutilisable par les tâches
+    taskiq dédiées à un seul modèle (backend/worker/model_tasks.py).
+    """
+    timeout_image = 60
+    total_timeout = max(60, timeout_image * len(image_list))
+    async with httpx.AsyncClient(timeout=total_timeout) as client:
+        try:
+            response = await client.post(url, json={"images": image_list})
+            if response.status_code != 200:
+                logger.error(
+                    "Erreur modèle %s: status %s - %s", url, response.status_code, response.text
+                )
+                return {
+                    "success": False,
+                    "error": f"Erreur du service {url}: {response.status_code} - {response.text}",
+                }
+            return response.json()
+        except httpx.RequestError as e:
+            logger.error("Erreur réseau vers %s: %s - %s", url, type(e).__name__, str(e))
+            return {"success": False, "error": f"Request error: {type(e).__name__} - {str(e)}"}
+        except SystemError as e:
+            logger.error("Erreur inattendue vers %s: %s", url, str(e))
+            return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+
+MODEL_URL_ENV_VARS = {
+    "salesforce_blip": "URL_SALESFORCE_CPU_LARGE",
+    "florence2": "URL_FLORANCE_2_LARGE",
+    "git_large": "URL_GIT_LARGE",
+}
+
+
+def get_model_url(model_key: str) -> str | None:
+    return os.getenv(MODEL_URL_ENV_VARS[model_key])
+
+
 def _resolve_batch_size() -> int:
     """Lit BATCH_SIZE/BATCH_MAX depuis l'environnement, valide et clamp.
 
@@ -90,37 +138,11 @@ async def stream_image_describe(images: List[str]):
          "result": <dict normalisé>, "total_images": int}
     """
 
-    async def call(url, image_list: List[str]):
-        timeout_image = 60
-        total_timeout = max(60, timeout_image * len(image_list))
-        async with httpx.AsyncClient(timeout=total_timeout) as client:
-            try:
-                response = await client.post(url, json={"images": image_list})
-                if response.status_code != 200:
-                    logger.error(
-                        "Erreur modèle %s: status %s - %s", url, response.status_code, response.text
-                    )
-                    return {
-                        "success": False,
-                        "error": f"Erreur du service {url}: {response.status_code} - {response.text}",
-                    }
-                return response.json()
-            except httpx.RequestError as e:
-                logger.error("Erreur réseau vers %s: %s - %s", url, type(e).__name__, str(e))
-                return {"success": False, "error": f"Request error: {type(e).__name__} - {str(e)}"}
-            except SystemError as e:
-                logger.error("Erreur inattendue vers %s: %s", url, str(e))
-                return {"success": False, "error": f"Unexpected error: {str(e)}"}
-
     batch_size = _resolve_batch_size()
     total_images = len(images)
     batches = [images[i : i + batch_size] for i in range(0, total_images, batch_size)]
 
-    model_urls = {
-        "salesforce_blip": os.getenv("URL_SALESFORCE_CPU_LARGE"),
-        "florence2": os.getenv("URL_FLORANCE_2_LARGE"),
-        "git_large": os.getenv("URL_GIT_LARGE"),
-    }
+    model_urls = {model_key: get_model_url(model_key) for model_key in MODEL_KEYS}
 
     sems = _get_model_semaphores()
 
@@ -142,7 +164,7 @@ async def stream_image_describe(images: List[str]):
                 # Chrono démarré après le sémaphore : on mesure la latence réelle
                 # du modèle, pas le temps d'attente dans la file.
                 call_start = time.monotonic()
-                result = await call(url, batch)
+                result = await call_model(url, batch)
                 ai_call_duration.record(time.monotonic() - call_start, attrs)
                 if result.get("success") is False:
                     ai_call_errors.add(1, attrs)
@@ -331,6 +353,12 @@ async def save_descriptions_slice(
     session: AsyncSession, images: List[Images], model_id, slice_map: dict
 ):
     return await _repo_save_image_descriptions_slice(session, images, model_id, slice_map)
+
+
+async def save_descriptions_by_ids(
+    session: AsyncSession, model_id: int | None, items: List[tuple]
+):
+    return await _repo_save_image_descriptions_by_ids(session, model_id, items)
 
 
 async def set_total_images(session: AsyncSession, db_task_id: int, total: int):

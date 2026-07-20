@@ -1,5 +1,5 @@
 from fastapi import APIRouter, status, Depends
-from .controller import get_all_tasks, get_task_result
+from .controller import cancel_task, get_all_tasks, get_task_result
 from ..auth.middleware import is_admin, get_current_user
 
 router = APIRouter()
@@ -9,6 +9,13 @@ router.add_api_route(
     get_all_tasks,
     dependencies=[Depends(is_admin)],
     methods=["GET"],
+    status_code=status.HTTP_200_OK,
+)
+router.add_api_route(
+    "/{task_id}/cancel",
+    cancel_task,
+    dependencies=[Depends(get_current_user)],
+    methods=["POST"],
     status_code=status.HTTP_200_OK,
 )
 router.add_api_route(
