@@ -40,8 +40,8 @@
 
 ## Documentation
 
-- [Manuel de déploiement](docs/manuels/deploiement.md.md) — procédure de mise en production sur un VPS
-- [Manuel d'utilisation](docs/manuels/utilisation.md.md) — prise en main de l'application par les utilisateurs
+- [Manuel de déploiement](docs/manuels/deploiement.md) — procédure de mise en production sur un VPS
+- [Manuel d'utilisation](docs/manuels/utilisation.md) — prise en main de l'application par les utilisateurs
 - [Configuration](docs/CONFIG.md) — variables d'environnement de l'application
 - [Configuration serveur](docs/CONFIG-SERVER.md) — configuration du serveur (reverse proxy, etc.)
 
