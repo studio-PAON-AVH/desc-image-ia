@@ -1,0 +1,119 @@
+# Exemple de configuration Nginx (reverse proxy) pour desc-image-ia
+# Voir docs/MANUEL_DEPLOIEMENT.md (section "Déploiement serveur") pour le contexte complet.
+#
+# Déploiement en 2 étapes (ne pas activer le bloc HTTPS à la main, voir plus bas) :
+#
+# 1) Sans nom de domaine (juste l'IP du VPS) : commandes à lancer sur le serveur.
+#    Remplacer server_name ci-dessous par l'IP ou le domaine réel avant de coller.
+#
+#      sudo nano /etc/nginx/sites-available/desc-image-ia   # coller ce fichier, adapter server_name
+#      sudo ln -s /etc/nginx/sites-available/desc-image-ia /etc/nginx/sites-enabled/
+#      sudo nginx -t
+#      sudo systemctl reload nginx
+#
+#    client_max_body_size 500M est indispensable pour l'envoi de fichiers EPUB volumineux.
+#
+#    Important : Let's Encrypt/Certbot ne délivre pas de certificat pour une IP
+#    nue, seulement pour un nom de domaine. Tant qu'aucun domaine ne pointe vers
+#    le VPS, rester sur ce bloc HTTP simple (port 80 uniquement).
+#
+# 2) Une fois un nom de domaine acheté et son enregistrement DNS A pointé vers
+#    l'IP du VPS (et le site déjà accessible en HTTP), activer HTTPS :
+#
+#      sudo apt update
+#      sudo apt install certbot python3-certbot-nginx -y
+#      sudo certbot --nginx -d votre-domaine.com
+#
+#    Certbot a besoin que le site réponde déjà en HTTP (challenge HTTP-01) pour
+#    obtenir le certificat : il ne faut donc PAS ajouter le bloc "listen 443 ssl"
+#    ni les chemins /etc/letsencrypt/... à la main avant cette étape, sinon
+#    nginx -t échoue ("cannot load certificate ... No such file or directory")
+#    puisque les fichiers n'existent pas encore.
+#
+#    Certbot modifie alors automatiquement ce fichier pour ajouter la
+#    redirection HTTP -> HTTPS et le bloc "listen 443 ssl" ci-dessous, à titre
+#    de référence. Le renouvellement est ensuite automatique et peut être
+#    vérifié avec :
+#
+#      sudo systemctl status certbot.timer
+#      sudo certbot renew --dry-run
+
+upstream backend_app {
+    server 127.0.0.1:8000;
+}
+
+server {
+    listen 80;
+    server_name votre-domaine-ou-ip;   # remplacer par le domaine réel (ex: exemple.com)
+
+    client_max_body_size 500M;
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location /grafana/ {
+        proxy_pass http://127.0.0.1:3001;   # PAS de / final ici
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket pour Grafana Live (dashboards temps réel)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Streams longs (Explore Loki/Tempo)
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+
+    # Frontend SPA (catch-all)
+    location / {
+        proxy_pass http://backend_app;
+    }
+}
+
+# --- Ce que Certbot génère automatiquement à l'étape 2 (ne pas décommenter à la main) ---
+#
+# server {
+#     listen 80;
+#     server_name votre-domaine-ou-ip;
+#     return 301 https://$host$request_uri;
+# }
+#
+# server {
+#     listen 443 ssl;
+#     server_name votre-domaine-ou-ip;
+#
+#     ssl_certificate     /etc/letsencrypt/live/votre-domaine-ou-ip/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/votre-domaine-ou-ip/privkey.pem;
+#     include /etc/letsencrypt/options-ssl-nginx.conf;
+#     ssl_dhparam /etc/letsencrypt/ssl-dhparam.pem;
+#
+#     client_max_body_size 500M;
+#
+#     proxy_set_header Host              $host;
+#     proxy_set_header X-Real-IP         $remote_addr;
+#     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+#     proxy_set_header X-Forwarded-Proto $scheme;
+#
+#     location /grafana/ {
+#         proxy_pass http://127.0.0.1:3001;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         proxy_http_version 1.1;
+#         proxy_set_header Upgrade $http_upgrade;
+#         proxy_set_header Connection "upgrade";
+#         proxy_read_timeout 300s;
+#         proxy_buffering off;
+#     }
+#
+#     location / {
+#         proxy_pass http://backend_app;
+#     }
+# }

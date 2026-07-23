@@ -42,7 +42,7 @@ Le reverse proxy Nginx doit ensuite être configuré pour router les requêtes v
 - L'endpoint `/api/` vers le backend
 - L'endpoint `/grafana/` vers la pile d'observabilité
 
-La configuration Nginx doit également inclure `client_max_body_size 500M`, indispensable pour l'envoi de fichiers EPUB volumineux. Une fois le DNS correctement configuré, Certbot permet d'activer HTTPS automatiquement.
+La configuration Nginx doit également inclure `client_max_body_size 500M`, indispensable pour l'envoi de fichiers EPUB volumineux. Une fois le DNS correctement configuré, Certbot permet d'activer HTTPS automatiquement. Un exemple de configuration complet est disponible dans [`docs/nginx/desc-image-ia.conf.example`](../nginx/desc-image-ia.conf.example).
 
 ## Vérifications après déploiement
 
