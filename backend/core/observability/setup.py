@@ -101,10 +101,14 @@ def _instrument_libraries(app) -> None:
     from opentelemetry.instrumentation.redis import RedisInstrumentor
     from opentelemetry.instrumentation.requests import RequestsInstrumentor
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+    from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
 
     RedisInstrumentor().instrument()
     HTTPXClientInstrumentor().instrument()
     RequestsInstrumentor().instrument()
+    # CPU/mémoire du process (et du host) : exportées en OTLP comme le reste,
+    # aucun collecteur externe (cAdvisor/node-exporter) n'est nécessaire.
+    SystemMetricsInstrumentor().instrument()
 
     # Le moteur async est créé à l'import de core.database.config, donc avant
     # ce setup : il faut l'instrumenter explicitement (l'instrumentation

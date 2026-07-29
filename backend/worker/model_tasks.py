@@ -4,10 +4,20 @@ import logging
 import time
 
 from opentelemetry import trace
+from taskiq import TaskiqEvents
 
 from backend.broker import broker_salesforce, broker_florence2, broker_git
 from backend.core.database.config import async_session, Task
-from backend.core.observability.metric import task_counter, task_duration
+from backend.core.observability.metric import (
+    ai_call_duration,
+    ai_call_errors,
+    ai_call_in_flight,
+    ai_call_wait,
+    ai_call_waiting,
+    task_counter,
+    task_duration,
+)
+from backend.core.observability.setup import setup_observability
 from backend.core.redis.redis import redis_server_dev
 from backend.core.storage import download_object_bytes
 from backend.epub.repository import update_task_status as _repo_update_task_status
@@ -31,6 +41,27 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 r = redis_server_dev()
+
+
+# broker (l'orchestrateur, worker.py) a son propre WORKER_STARTUP qui appelle
+# setup_observability : chaque worker taskiq ne démarre qu'un seul broker, donc
+# ce hook doit être répété ici pour broker_salesforce/florence2/git, sans quoi
+# ces 3 processus tournent sans OTel (métriques ai_call_*/task_* et traces
+# jamais exportées, cf. WORKER_STARTUP ne se déclenche que pour le broker
+# effectivement lancé dans le processus).
+@broker_salesforce.on_event(TaskiqEvents.WORKER_STARTUP)
+async def _init_observability_salesforce(state):
+    setup_observability("desc-image-worker")
+
+
+@broker_florence2.on_event(TaskiqEvents.WORKER_STARTUP)
+async def _init_observability_florence2(state):
+    setup_observability("desc-image-worker")
+
+
+@broker_git.on_event(TaskiqEvents.WORKER_STARTUP)
+async def _init_observability_git(state):
+    setup_observability("desc-image-worker")
 
 
 async def _persist_slice(model_id, batch_images: list[dict], results: list) -> None:
@@ -124,16 +155,42 @@ async def _describe_batch(
 
     try:
         with tracer.start_as_current_span("describe_batch", attributes={"model": model_key}):
+            attrs = {"model": model_key}
             sem = get_model_semaphore(model_key)
-            async with sem:
-                img_list = [
-                    base64.b64encode(download_object_bytes(bucket, entry["object_key"])).decode(
-                        "utf-8"
-                    )
-                    for entry in batch_images
-                ]
-                url = get_model_url(model_key)
-                result = await call_model(url, img_list)
+            # Même pattern que stream_image_describe (epub/service.py) : mesure
+            # le temps bloqué sur le sémaphore avant l'appel (ai_call_waiting/
+            # ai_call_wait), séparément de la durée de l'appel lui-même.
+            wait_start = time.monotonic()
+            ai_call_waiting.add(1, attrs)
+            acquired = False
+            try:
+                await sem.acquire()
+                acquired = True
+                ai_call_waiting.add(-1, attrs)
+                ai_call_wait.record(time.monotonic() - wait_start, attrs)
+                ai_call_in_flight.add(1, attrs)
+                try:
+                    img_list = [
+                        base64.b64encode(
+                            download_object_bytes(bucket, entry["object_key"])
+                        ).decode("utf-8")
+                        for entry in batch_images
+                    ]
+                    url = get_model_url(model_key)
+                    call_start = time.monotonic()
+                    result = await call_model(url, img_list)
+                    ai_call_duration.record(time.monotonic() - call_start, attrs)
+                    if result.get("success") is False:
+                        ai_call_errors.add(1, attrs)
+                        raise RuntimeError(
+                            result.get("error") or f"Échec du modèle {model_key}"
+                        )
+                finally:
+                    ai_call_in_flight.add(-1, attrs)
+                    sem.release()
+            finally:
+                if not acquired:
+                    ai_call_waiting.add(-1, attrs)
 
             if is_cancelled(r, task_id):
                 logger.info(

@@ -1,0 +1,99 @@
+# Provisioning des règles d'alerte Grafana, chargées automatiquement au
+# démarrage du conteneur lgtm (même principe que provisioning/dashboards.yaml
+# pour les tableaux de bord : rien à configurer manuellement dans l'UI).
+#
+# Pas de contactPoints/policies ici : les alertes restent visibles nativement
+# dans Grafana (Alerting > Alert rules, état Normal/Pending/Firing + historique
+# des évaluations) sans canal de notification externe. Elles sont routées par
+# défaut vers le contact point intégré de Grafana (grafana-default-email) ;
+# tant qu'aucun SMTP n'est configuré, l'envoi échoue silencieusement mais
+# l'état "Firing" reste consultable dans l'UI, ce qui suffit ici.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: desc-image-ia
+    folder: desc-image-ia
+    interval: 1m
+    rules:
+      # Reprend la même requête que le panneau "Taux d'erreur par modèle" du
+      # dashboard "Modèles IA" (ai-models.json).
+      - uid: ai-model-error-rate
+        title: "Taux d'erreur élevé sur un modèle IA"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >-
+                100 * sum by (model) (rate(ai_call_errors_total[5m]))
+                / sum by (model) (rate(ai_call_duration_seconds_count[5m]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [20] }
+              refId: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Le modèle {{ $labels.model }} dépasse 20 % d'erreurs sur les appels des 5 dernières minutes."
+          dashboard: "Modèles IA"
+        noDataState: OK
+        execErrState: Error
+
+      # Reprend la même requête que le panneau "Taux d'erreur global HTTP
+      # (5xx)" du dashboard "Vue d'ensemble" (overview.json).
+      - uid: http-5xx-error-rate
+        title: "Taux d'erreur HTTP 5xx élevé"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              expr: >-
+                100 * sum(rate(http_server_duration_milliseconds_count{job="desc-image-api", http_status_code=~"5.."}[5m]))
+                / sum(rate(http_server_duration_milliseconds_count{job="desc-image-api"}[5m]))
+              instant: true
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [5] }
+              refId: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Plus de 5 % des requêtes HTTP répondent en erreur serveur (5xx) sur les 5 dernières minutes."
+          dashboard: "API & Logs"
+        noDataState: OK
+        execErrState: Error

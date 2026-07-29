@@ -202,6 +202,7 @@ services:
       - lgtm_data:/data
       - ./backend/core/observability/grafana/provisioning/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/desc-image-ia.yaml:ro
       - ./backend/core/observability/grafana/dashboards:/otel-lgtm/grafana/dashboards:ro
+      - ./backend/core/observability/grafana/provisioning/alerting.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/desc-image-ia.yaml:ro
 
   fastapi:
     build:
