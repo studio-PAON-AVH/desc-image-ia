@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -41,6 +42,8 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 r = redis_server_dev()
+CALL_MODEL_MAX_ATTEMPTS = 3
+CALL_MODEL_RETRY_DELAYS_SECONDS = [2, 5]
 
 
 # broker (l'orchestrateur, worker.py) a son propre WORKER_STARTUP qui appelle
@@ -145,6 +148,12 @@ async def _describe_batch(
     du batch depuis MinIO, appelle le modèle, persiste le résultat, met à jour
     la progression et finalise la tâche si c'est le dernier batch en attente.
 
+    Un échec du modèle appelé (après retries, cf. CALL_MODEL_MAX_ATTEMPTS)
+    n'interrompt pas la tâche : seules les images de ce batch restent sans
+    description pour ce modèle-là, les 2 autres modèles et les autres batches
+    continuent normalement. Seule une erreur inattendue (téléchargement MinIO,
+    DB...) fait échouer toute la tâche via _mark_failed, dans le except plus bas.
+
     Coopératif avec l'annulation : vérifie le flag Redis avant de démarrer et
     juste avant de persister quoi que ce soit, pour ne pas ressusciter des
     données qu'un DELETE /task/{id}/cancel concurrent viendrait de supprimer.
@@ -177,13 +186,43 @@ async def _describe_batch(
                         for entry in batch_images
                     ]
                     url = get_model_url(model_key)
-                    call_start = time.monotonic()
-                    result = await call_model(url, img_list)
-                    ai_call_duration.record(time.monotonic() - call_start, attrs)
-                    if result.get("success") is False:
+                    last_error = None
+                    for attempt in range(1, CALL_MODEL_MAX_ATTEMPTS + 1):
+                        call_start = time.monotonic()
+                        result = await call_model(url, img_list)
+                        ai_call_duration.record(time.monotonic() - call_start, attrs)
+                        if result.get("success") is not False:
+                            last_error = None
+                            break
+                        last_error = result.get("error") or f"Échec du modèle {model_key}"
                         ai_call_errors.add(1, attrs)
-                        raise RuntimeError(
-                            result.get("error") or f"Échec du modèle {model_key}"
+                        if attempt < CALL_MODEL_MAX_ATTEMPTS:
+                            logger.warning(
+                                "Échec du modèle %s (tentative %d/%d) pour la tâche %s : %s",
+                                model_key,
+                                attempt,
+                                CALL_MODEL_MAX_ATTEMPTS,
+                                task_id,
+                                last_error,
+                            )
+                            await asyncio.sleep(
+                                CALL_MODEL_RETRY_DELAYS_SECONDS[attempt - 1]
+                            )
+                    if last_error is not None:
+                        # Échec définitif du modèle pour ce batch (après
+                        # CALL_MODEL_MAX_ATTEMPTS tentatives) : on journalise et on
+                        # continue sans lever d'exception. Un modèle en panne ne doit
+                        # pas faire échouer toute la tâche ni bloquer les 2 autres
+                        # modèles — seules les images de ce batch resteront sans
+                        # description pour ce modèle précis (`results` reste vide,
+                        # cf. plus bas).
+                        logger.error(
+                            "Échec définitif du modèle %s pour la tâche %s après %d tentatives : %s"
+                            " — batch ignoré pour ce modèle, la tâche continue.",
+                            model_key,
+                            task_id,
+                            CALL_MODEL_MAX_ATTEMPTS,
+                            last_error,
                         )
                 finally:
                     ai_call_in_flight.add(-1, attrs)
