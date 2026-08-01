@@ -1,12 +1,12 @@
 # ---- Stage 1 : deps ----
-FROM node:23-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --prefer-offline
 
 # ---- Stage 2 : builder ----
-FROM node:23-alpine AS builder
+FROM node:25-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

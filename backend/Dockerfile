@@ -1,4 +1,4 @@
-FROM node:23-alpine AS frontend-build
+FROM node:25-alpine AS frontend-build
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
@@ -7,7 +7,7 @@ ARG VITE_API_URL=""
 ENV VITE_API_URL=${VITE_API_URL}
 RUN npm run build
 
-FROM python:3.12.13-slim-bookworm
+FROM python:3.14.6-slim-bookworm
 WORKDIR /app
 
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
